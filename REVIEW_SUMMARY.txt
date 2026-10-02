@@ -1,0 +1,351 @@
+================================================================================
+LabConnect - Review & Fix Log
+Location: /home/sudesh/Desktop/LabConnect
+Host: Linux Mint 22.3 (x86_64) | JDK 21.0.12 | Maven 3.8.7
+Last updated: 2026-10-01
+================================================================================
+
+--------------------------------------------------------------------------------
+1. WHAT IT IS
+--------------------------------------------------------------------------------
+LabConnect is a DECENTRALIZED (server-less) LAN-only communication app. Devices on
+the same network discover each other automatically, then do 1-to-1 chat, group
+chat, and file transfer. Think a self-hosted offline "AirDrop + Snapchat" for a
+local network: no server, no cloud, no internet, no telemetry. Every device is an
+equal peer (full mesh). Educational/portfolio project.
+
+Clients: DESKTOP (Java + JavaFX) and ANDROID (Kotlin + Jetpack Compose).
+
+--------------------------------------------------------------------------------
+2. TECH STACK
+--------------------------------------------------------------------------------
+Language/Build .... Java 17 target (builds on JDK 21), JavaFX 21, Maven
+                     Android: Kotlin, Jetpack Compose, Gradle
+Discovery ........ UDP multicast 239.255.255.250:50001 (+ broadcast fallback)
+Data ............. TCP 5000, non-blocking Java NIO Selector
+Wire format ...... [Length:4][Type:1][Flags:1][MessageId:16][Payload:N]
+Security ......... TLS 1.3 mutual (mTLS), Ed25519 identity keys, TOFU pairing,
+                   BouncyCastle 1.78.1
+Transfer ......... 64KB chunks, sliding-window ACK, resume, SHA-256 verify
+Config ........... config.yaml (ports, intervals, chunk size, TLS)
+Tests ............ 78 unit/integration tests - ALL PASSING
+
+--------------------------------------------------------------------------------
+3. FIXES APPLIED  (all verified on this machine)
+--------------------------------------------------------------------------------
+
+[FIX 1] config.yaml was NEVER loading - all settings silently discarded
+  File: core/config/AppConfig.java
+  Cause: NetworkConfig had fields/setters named "announceIntervalSec" but
+  getters named getAnnounceInterval() returning Duration. Jackson serialised
+  BOTH keys, and the extra "announceInterval" key was rejected on reload ->
+  UnrecognizedPropertyException -> "Failed to load config, using defaults" ->
+  every user setting was thrown away and the file overwritten each run.
+  Fix:   @JsonIgnore on the three Duration getters, plus
+         @JsonIgnoreProperties(ignoreUnknown = true) on all config classes.
+  Also:  extracted load(Path)/save(Path) so the round trip is testable.
+  VERIFIED: a config with tcpPort=7777, name=RoundTripTestPC,
+  announceIntervalSec=42 now loads correctly and round-trips clean.
+  NOTE: the report claimed a "ConfigTest (4 tests)" but no such file existed -
+  config had ZERO coverage, which is why this shipped broken. Added
+  ConfigTest with 5 tests covering round trip, derived-key absence, unknown
+  keys, missing file, and all other sections. Test count 73 -> 78.
+
+[FIX 2] jar was not runnable ("no main manifest attribute")
+  File: pom.xml
+  Fix:   added <mainClass>com.labconnect.desktop.Launcher</mainClass> to the
+         jar manifest, and added maven-shade-plugin to bundle all ~15
+         dependencies into one self-contained fat jar.
+  VERIFIED: `java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar` now starts
+         the app. Jar grew 197KB -> 25MB (deps included).
+
+[FIX 3] GUI was never started (Launcher just printed a banner and exited)
+  Files: new desktop/LabConnectApp.java, desktop/ui/MainWindow.java,
+         desktop/services/DesktopService.java, desktop/Launcher.java
+  Fix:   created LabConnectApp extends javafx.application.Application which
+         loads config, builds DesktopService OFF the FX thread (it binds
+         sockets), constructs MainWindow and shows the window, and calls
+         discoverDevices(). Added MainWindow.show() (it previously set the
+         Scene but never called stage.show()). Launcher now delegates via
+         Application.launch(). Added DesktopService.shutdown() to release
+         discovery/transfer/connection resources on app exit.
+  VERIFIED: a real 1000x700 window titled "LabConnect - LabConnect-sudesh"
+         appears on DISPLAY :0 (confirmed via wmctrl/xwininfo). Log ends with
+         "LabConnect UI is running" and zero exceptions.
+
+[FIX 4] mvn javafx:run (documented in SETUP.md) did not work
+  File: pom.xml
+  Fix:   added org.openjfx:javafx-maven-plugin:0.0.8 with the required
+         --add-exports/--add-opens for the desktop packages (the plugin runs
+         in module mode, so the app package had to be exported to
+         javafx.graphics).
+  VERIFIED: `mvn javafx:run` opens the same window, no errors.
+
+[FIX 5] config.yaml contained JSON, not YAML
+  Files: pom.xml, core/config/AppConfig.java, module-info.java, ConfigTest.java
+  Fix:   added SnakeYAML 2.2 (requires org.yaml.snakeyaml in module-info) and
+         rewrote AppConfig to emit genuine block-style YAML. The file is built
+         from an explicit Map instead of reflected off the bean, so the derived
+         Duration accessors can never leak into the file - which was the
+         original bug. Loading ignores unknown keys and falls back to defaults
+         on a malformed file.
+         (SnakeYAML bean introspection was tried first and rejected: it emitted
+         an empty bean plus a forbidden global tag under JPMS.)
+  VERIFIED: config.yaml is real block YAML; tcpPort=7777 round-trips; the GUI
+         starts and regenerates the file correctly. ConfigTest 5 -> 7 tests.
+
+[FIX 6] docs described a build structure that did not exist
+  Removed the empty core/, desktop/ and tests/ directories (0 files each).
+  Corrected: PROJECT_REPORT.md file-structure appendix (now the real single
+  module layout, including module-info.java and src/test), PROJECT_REPORT.md
+  "Maven multi-module" -> "Maven single module", ARCHITECTURE.md module
+  headings (packages, not directories), and PROJECT_PLAN.md source paths.
+  Also fixed wrong jar name in 7 places (the artifact is labconnect-core, not
+  labconnect-desktop), removed documented CLI flags that do not exist
+  (--config, --headless, --diagnostics, --test-server, --test-client, and the
+  -Dlabconnect.* port override), added Linux install + ufw instructions, and
+  corrected the test table which was missing DiscoveryManagerTest and had
+  DiagnosticsManagerTest wrong (docs now sum to 80, matching surefire).
+
+--------------------------------------------------------------------------------
+4. ADDITIONAL BUGS FOUND AND FIXED WHILE TESTING
+--------------------------------------------------------------------------------
+
+[BUG A] NPE crash on startup (pre-existing, never hit before the GUI ran)
+  File: desktop/services/DesktopService.java, core/diagnostics/DiagnosticsManager.java
+  Cause: DesktopService built DiagnosticsManager with a literal `null`
+         DiscoveryManager and a comment "will be set after creation" - but the
+         field is `final` with no setter, so it was never set. The UI calls
+         getDiscoveryStatus() on every refresh -> NullPointerException, which
+         killed the app the moment the window opened.
+  Fix:   construct DiagnosticsManager after DiscoveryManager and pass the real
+         instances (this also removed a pointless second ConnectionManager
+         bound to port 0), and added a null guard in getDiscoveryStatus() so a
+         missing discovery manager degrades to an empty status instead of
+         crashing.
+
+[BUG B] ClassNotFoundException on every startup
+  File: desktop/Launcher.java
+  Cause: Launcher set java.util.logging.manager to
+         "org.apache.logging.log4j.jul.LogManager", but Log4j is not a
+         dependency (this project uses SLF4J + Logback). Every run printed a
+         stack trace.
+  Fix:   removed the bogus system property.
+
+--------------------------------------------------------------------------------
+5. PEER-TO-PEER VALIDATION - 5 SERIOUS TRANSPORT BUGS FOUND AND FIXED
+--------------------------------------------------------------------------------
+
+I said earlier that only the UI launch and the unit tests were verified, and that
+real peer-to-peer behaviour was untested. So I tested it: two separate OS
+processes on this machine, each running the real application code, discovering
+each other over UDP multicast and exchanging traffic over TCP. That exposed five
+bugs that made the entire messaging system non-functional. Every one of them was
+invisible to the existing tests because those tests only asserted *connection
+state*, never *data arrival*.
+
+[BUG C] No data was ever written to the socket (the big one)
+  File: core/networking/Connection.java (flush)
+  Cause: FrameCodec.encode() already returns a flipped, read-ready ByteBuffer.
+         Connection.flush() then called buffer.flip() again. flip() swaps limit
+         and position, so for an already-flipped buffer hasRemaining() became 0,
+         the write loop body never executed, and channel.write() was NEVER
+         called. totalWritten stayed 0, so the "wrote N bytes" debug line never
+         even appeared.
+         The socket stayed open, connections were established, the handshake ran,
+         and all 80 tests passed - but zero bytes reached the peer. Discovery
+         worked while all chat, heartbeat and file traffic silently vanished.
+  Fix:   flush() now writes the buffers as-is (no flip) and only removes a
+         buffer from the queue once it is fully written, so a partial write
+         (a 64KB file chunk filling the socket buffer) resumes on the next
+         writable event instead of being silently truncated.
+
+[BUG D] Read buffer smaller than a single file chunk
+  File: core/networking/Connection.java, core/protocol/FrameCodec.java
+  Cause: READ_BUFFER_SIZE was 64KB, but the default file chunk in config.yaml is
+         chunkSize: 65536. A chunk frame is 65536 + 24 header bytes, and
+         FrameCodec.hasCompleteFrame() requires the ENTIRE frame to be buffered
+         before it will decode. The buffer could never hold the frame, so it
+         grew no further, hasCompleteFrame() never returned true, and the read
+         loop spun on "read 0 bytes" forever. File transfer could never have
+         worked even with a correct write path.
+  Fix:   the read buffer now grows on demand (doubling, capped at
+         FrameCodec.MAX_FRAME_SIZE) to hold the declared frame length, with
+         partial data preserved across reallocation. Added FrameCodec
+         .peekFrameLength() to read the length field without consuming it. A
+         partial frame that exceeds the cap is discarded with a warning rather
+         than wedging the connection.
+
+[BUG E] else-if chain skipped all writes on busy sockets
+  File: core/networking/ConnectionManager.java (selectorLoop)
+  Cause: readiness was handled as
+             if (accept) ... else if (connect) ... else if (read) ... else if (write)
+         A socket is routinely BOTH readable and writable in the same selector
+         cycle (incoming data plus queued outgoing data). The else-if chain meant
+         handleWrite() was never called in that case, so frames stayed stuck in
+         the write queue until the peer happened to stop sending.
+  Fix:   four independent if checks, each guarded by key.isValid().
+
+[BUG F] The selector thread could die silently (CancelledKeyException)
+  File: core/networking/ConnectionManager.java (selectorLoop)
+  Cause: close() and closeConnection() cancel SelectionKeys from other threads.
+         The loop checked key.isValid() once at the top, then called
+         key.isWritable(). If a key was cancelled between those two lines,
+         isWritable() throws CancelledKeyException - an UNCHECKED exception.
+         The loop only caught IOException, so the exception propagated and killed
+         the selector thread outright. When the selector thread dies, every
+         connection silently stops working forever with no error shown to the
+         user; I found this in a surefire stack trace, not from any log line.
+  Fix:   re-check key.isValid() before each readiness query, and catch
+         CancelledKeyException, ClosedSelectorException and RuntimeException in
+         the loop. The selector thread is now incapable of dying from a bad key.
+
+[BUG G] interestOps() mutated from non-selector threads
+  File: core/networking/ConnectionManager.java
+  Cause: worker threads called key.interestOps(...) to add OP_WRITE. Per the NIO
+         contract interest ops may only be changed by the selector thread;
+         selector.wakeup() alone does not make it safe. The update was
+         racy and could be dropped, stranding a queued frame.
+  Fix:   worker threads now only record the request in a concurrent set and wake
+         the selector (requestWriteInterest()); the selector thread applies it
+         (applyPendingWriteInterests()). handleConnect() had also reset interest
+         to OP_READ, which wiped a just-applied OP_WRITE and stranded queued
+         data; it now preserves OP_WRITE when writes are pending.
+
+[BUG H] Discovery listener could not be shared (blocked local testing)
+  File: core/discovery/DiscoveryListener.java, DiscoveryAnnouncer.java
+  Cause: the listener bound UDP with a plain bind and no SO_REUSEADDR, so a
+         second instance on the same host failed to bind the discovery port.
+         That makes it impossible to run two instances on one machine, which the
+         project's own SETUP.md/TESTING.md suggested for testing.
+  Fix:   set SO_REUSEADDR before bind on both the listener and the announcer.
+         This is required for multicast listeners anyway.
+
+  Evidence the fix works (two independent OS processes, real sockets):
+    Initiator : DISCOVERED PEER-Responder at 192.168.1.14:6001
+    Initiator : CONNECTED=true
+    Responder : FRAME type=0x10 (HELLO, identity + capabilities)
+    Responder : FRAME type=0x30 {"from":"PEER-Initiator","body":"hello from Initiator"}
+    Responder : RECEIVED_FRAMES=[{"from":"PEER-Initiator","body":"hello from Initiator"}]
+
+  Regression tests added: src/test/java/com/labconnect/core/networking/
+  P2PFrameDeliveryTest.java (5 tests) - single frame delivery, the default 64KB
+  file chunk, a 512KB payload that forces partial writes, 25 concurrent frames,
+  and reverse-direction delivery. Each asserts the payload actually ARRIVES and
+  is byte-for-byte correct. Test count is now 85, all passing.
+
+  Note on the old tests: ConnectionManagerTest contained a stubbed-out test
+  commented "Disabled - frame delivery timing issue in test environment", and
+  MultiDeviceTest had testDiscoveryAndConnectionIntegration commented out. That
+  "timing issue" was BUG C - a real defect that was misdiagnosed as flakiness.
+  I removed the stub (P2PFrameDeliveryTest covers it properly) and note the
+  history in its place.
+
+--------------------------------------------------------------------------------
+6. HONEST STATE OF THE PROJECT: WHAT IS REAL AND WHAT IS STILL A STUB
+--------------------------------------------------------------------------------
+
+This is the most important part of the review. The networking/discovery/
+transport layer is genuinely implemented - and, after the five fixes above, it
+actually works. But the APPLICATION layer sitting on top of it is a skeleton of
+empty method bodies. I scanned every method in src/main/java: 51 have empty or
+comment-only bodies, and they are concentrated in exactly the features the docs
+describe as complete.
+
+Genuinely implemented and verified working:
+  - UDP multicast discovery, bidirectional between two live processes
+  - TCP non-blocking transport, framing, heartbeats, stale-peer detection
+  - Real frame delivery both directions, including 64KB chunks and 512KB
+    payloads across partial writes
+  - Config load/save as real YAML
+  - JavaFX GUI: window opens, device list populates from live discovery
+
+STILL EMPTY STUBS (no behaviour at all):
+  core/messaging/ChatManager.java
+      - handleIncomingMessage  body is just "// Handle incoming messages"
+      - sendMessage           body is just "// Send text message frame"
+      - sendGroupMessage      body is just "// Send group message frame"
+    Chat is a facade with no logic. Nothing is ever sent or received.
+  core/transfer/TransferManager.java
+      - sendFileRequest / sendFileAccept / sendFileChunk / sendFileComplete
+        are all empty. sendFile() reads the file, hashes it, builds metadata,
+        queues a task and then calls sendFileRequest(), which does nothing.
+      - onTaskStart / onTaskComplete / onTaskProgress / onTaskFail empty
+      - handleFileRequest / handleFileAccept / handleFileResume empty
+    File transfer sends zero bytes regardless of the transport fix.
+  core/security/TlsContextManager.java
+      - loadOrGenerateKeyPair: "// For now, skip self-signed certificate
+        generation"
+      - initializeSSLContext: "without client certificate authentication for
+        now"
+    There is no TLS 1.3 mutual auth on the TCP transport. The transport is
+    plaintext. Claiming mTLS/Ed25519/TOFU is not accurate today.
+  core/security/KeyPairGenerator.java  - device ID derivation is a comment
+  core/history/HistoryManager.java     - JSON persistence is a comment
+  core/messaging/GroupManager.java     - group invites only log
+  desktop/services/DesktopService.java
+      - connectToDevice: "// TODO: Implement connection logic" -> the UI's
+        Connect button does nothing
+  desktop/ui/MainWindow.java
+      - file sender shows a "Coming Soon" alert
+      - device button enable/disable is a TODO
+      - the New Chat dialog sends a hardcoded "Hello!" to a peer that was never
+        connected
+  desktop/ui/TransferView.java        - device list hardcoded empty
+
+BOTTOM LINE: discovery and the transport work and are now verified. Chat, file
+transfer, and encrypted pairing do not work, because they were never written.
+The unit tests do not catch this because they test the data classes, the queue
+prioritiser, the checksum engine and the config mapper directly - none of them
+exercised an empty method. PROJECT_REPORT.md and PROJECT_PLAN.md describe all of
+these as complete, which is the discrepancy worth acting on.
+
+--------------------------------------------------------------------------------
+7. HOW TO RUN IT ON LINUX NOW
+--------------------------------------------------------------------------------
+  # build + test
+  cd ~/Desktop/LabConnect
+  mvn clean package        # 78/78 tests pass
+
+  # run (either works)
+  java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
+  mvn javafx:run
+
+  # optional native installer
+  jpackage --input target --main-jar labconnect-core-1.0.0-SNAPSHOT.jar \
+           --name LabConnect --type deb
+
+  # firewall
+  sudo ufw allow 5000/tcp
+  sudo ufw allow 50001/udp
+
+  # second peer on this same machine (for discovery testing).
+  # There is no CLI flag for the port - run the peer from a separate directory
+  # containing its own config.yaml with a different network.tcpPort. Copy
+  # config.yaml to /tmp/peerB, set tcpPort: 5001, then:
+  cd /tmp/peerB && java -jar /path/to/labconnect-core-1.0.0-SNAPSHOT.jar
+
+--------------------------------------------------------------------------------
+8. STILL TRUE / KNOWN GAPS  (not fixed)
+--------------------------------------------------------------------------------
+  * Peer-to-peer validation is now DONE for discovery and transport (section 5,
+    two real processes, HELLO + text message delivered both ways). It is still
+    NOT done for chat, file transfer or pairing, because those code paths are
+    empty stubs - see section 6. Testing them further would require writing
+    them first.
+  * Only tested on loopback-style addressing on one host (192.168.1.14, both
+    peers). Discovery across a real LAN segment, and across Wi-Fi/ethernet
+    segment boundaries where multicast is filtered, is still unverified.
+  * ARCHITECTURE.md and PROJECT_REPORT.md remain aspirational in the ways
+    described in section 6 - chat, file transfer and mTLS are described as
+    working features but are unimplemented.
+  * mvn javafx:run prints a harmless JavaFX warning about loading from the
+    unnamed module; it is a modularity nit, not an error.
+  * The project is a JPMS module (module-info.java) but ships as a fat jar run
+    on the classpath, so those module boundaries are not enforced at runtime.
+    Converting it to a proper modular runtime would be a larger change.
+  * Docs still include Windows-only snippets (PowerShell firewall rules,
+    jpackage --type exe) alongside the Linux ones.
+  * No git repository, so none of these fixes are version controlled.
+
+================================================================================

@@ -1,0 +1,22 @@
+---
+device:
+  name: LabConnect-sudesh
+  type: DESKTOP
+network:
+  tcpPort: 5000
+  discoveryPort: 50001
+  multicastGroup: 239.255.255.250
+  announceIntervalSec: 5
+  heartbeatIntervalSec: 5
+  connectionTimeoutSec: 10
+transfer:
+  chunkSize: 65536
+  maxConcurrentTransfers: 4
+  resumeEnabled: true
+security:
+  requirePairing: true
+  tlsVersion: TLSv1.3
+logging:
+  level: INFO
+  fileEnabled: true
+  consoleEnabled: true

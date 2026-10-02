@@ -1,0 +1,44 @@
+# ---- Build output ----
+target/
+build/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- Bundled Gradle distributions (815MB!) ----
+# These are downloaded binaries, not source. Without this the repo is ~843MB
+# and GitHub rejects the push.
+android/gradle-*/
+gradle-*/
+!gradle/wrapper/
+
+# ---- Gradle / Android ----
+.gradle/
+local.properties
+*.apk
+*.aab
+android/.idea/
+.idea/
+
+# ---- Runtime output ----
+logs/
+*.log
+*.log.gz
+downloads/
+config.local.yaml
+
+# ---- OS / editor noise ----
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+*.iml
+
+# ---- Secrets / keys ----
+# Never commit private keys or keystores
+*.key
+*.pem
+*.jks
+*.keystore
+keystore.properties
