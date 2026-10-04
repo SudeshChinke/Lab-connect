@@ -1,0 +1,278 @@
+LabConnect - Engineering Status Report
+Generated: 2026-10-04
+Commit: ec4d1e2 (single commit, clean tree)
+
+================================================================================
+1. BUILD / TEST STATE  (verified 2026-10-04)
+================================================================================
+
+  mvn clean package      -> BUILD SUCCESS
+  Tests: 85/85 passing, zero failures
+  No uncommitted changes, no stray processes
+
+  PASSING test suites:
+    FrameCodecTest 8, ConnectionManagerTest 1, P2PFrameDeliveryTest 5,
+    MultiDeviceTest 3, DiscoveryManagerTest 3, TextMessageTest 5,
+    MessageDeduplicatorTest 4, GroupTest 5, TransferTest 8,
+    ResumableTransferTest 4, HistoryManagerTest 10, ErrorHandlerTest 13,
+    DiagnosticsManagerTest 9, ConfigTest 7
+
+  What is genuinely verified working (two real OS processes on one host):
+    - UDP multicast discovery, bidirectional
+    - TCP non-blocking transport, framing, heartbeats, stale detection
+    - Frame delivery BOTH directions, incl. 64KB chunks and 512KB payloads
+      across partial writes (P2PFrameDeliveryTest)
+    - Config YAML load/save round trip
+    - JavaFX GUI launches, device list populates from live discovery
+
+  CRITICAL TESTING CAVEAT: the existing tests are almost all unit tests on data
+  classes, priority queues, checksum engine and the config mapper. They do NOT
+  exercise the end-to-end application paths. This is precisely how the app
+  shipped with 51 empty methods and every test green. Any new feature MUST have
+  an integration test asserting real payload arrival, not just isConnected().
+
+================================================================================
+2. BLOCKING ERRORS  (app cannot do its advertised job)
+================================================================================
+
+[E1] DesktopService never routes frames -> chat can never work
+  File: desktop/services/DesktopService.java:33-39
+  Problem: ConnectionManager is constructed with three no-op callbacks:
+      conn -> {},          // onConnectionEstablished
+      conn -> {},          // onConnectionClosed
+      frame -> {}          // onFrameReceived
+  The onFrameReceived callback is the ONLY path by which inbound frames reach
+  the application. Because it is empty, ChatManager.handleFrame() and
+  TransferManager.handleFrame() are never invoked. Even after implementing the
+  chat methods, no message would ever arrive.
+  Fix: route frames by MessageType into ChatManager / TransferManager /
+  PairingManager / DiagnosticsManager. Register the same routing as a real
+  onFrameReceived lambda, and use onConnectionEstablished/Closed to update UI
+  state and the DiagnosticsManager connection table.
+
+[E2] DesktopService.connectToDevice() is empty -> Connect button is a no-op
+  File: desktop/services/DesktopService.java:124
+      // TODO: Implement connection logic
+  Fix: look the device up via discoveryManager.getDevice(deviceId), then
+  connectionManager.connect(device.ipAddress(), device.tcpPort()), then
+  sendHello() with the real local deviceId, name and public key so the peer can
+  map the connection to a deviceId. Without sendHello, getConnection(deviceId)
+  can never match and all outbound sends fail the "not connected" check.
+
+[E3] ChatManager.sendTextMessage() and sendGroupMessage() are empty
+  File: core/messaging/ChatManager.java:101 and :105
+      private void sendTextMessage(Connection conn, TextMessage message) {
+          // Send text message frame
+      }
+  sendMessage() does all the surrounding bookkeeping correctly (resolves the
+  connection, builds the TextMessage, stores it, registers a PendingAck, fires
+  onMessageSent) and then calls this empty method. So the UI will appear to
+  "send" a message that never leaves the machine.
+  Fix: serialize TextMessage to JSON (Jackson ObjectMapper + JavaTimeModule is
+  already the pattern used in DiscoveryListener) and call
+  connectionManager.sendFrame(conn, Frame.create(MessageType.TEXT_MESSAGE.value(),
+  (byte) 0, UUID.randomUUID(), json.getBytes(UTF_8))).
+  Same for GROUP_MESSAGE (0x33).
+
+[E4] ChatManager.handleFrame() is empty -> inbound chat dropped
+  File: core/messaging/ChatManager.java:93
+      public void handleFrame(FrameCodec.Frame frame) {
+          // Handle incoming messages
+      }
+  Fix: switch on frame.type(): TEXT_MESSAGE (0x30) deserialize TextMessage and
+  pass to onMessageReceived; MESSAGE_ACK (0x31) resolve the PendingAck in
+  pendingAcks; GROUP_MESSAGE (0x33) route to the group chat. Deduplicate by
+  messageId (MessageDeduplicator already exists and is tested - reuse it).
+
+[E5] TransferManager: all four wire methods are empty -> transfers send zero bytes
+  File: core/transfer/TransferManager.java
+      private void sendFileRequest(...)   { // Send FILE_REQUEST frame }
+      private void sendFileAccept(...)    { // Send FILE_ACCEPT frame }
+      private void sendFileChunk(...)     { // Send FILE_CHUNK frame }
+      private void sendFileComplete(...)  { // Send FILE_COMPLETE frame }
+  Also empty: onTaskStart, onTaskComplete, onTaskProgress, onTaskFail,
+  handleFileRequest, handleFileAccept, handleFileResume, reportProgress,
+  getTransfer, getActiveTransfers, getQueueSize, getRunningCount.
+  sendFile() already computes SHA-256, builds TransferMetadata and queues the
+  task correctly - it just never emits a frame.
+  Fix: implement the FILE_* frame handlers using types 0x40 REQUEST,
+  0x41 ACCEPT, 0x43 CHUNK, 0x45 COMPLETE, 0x48 RESUME. Chunk size comes from
+  config.transfer.chunkSize (65536). Receive side must reassemble to
+  downloadDir and verify against the sender's SHA-256.
+  NOTE: the transport is already proven to handle 64KB chunks and 512KB
+  payloads (P2PFrameDeliveryTest), so no transport work is needed here.
+
+[E6] No encryption at all - TLS is dead code, never invoked
+  File: core/security/TlsContextManager.java
+  Findings:
+    - loadOrGenerateIdentity() generates an Ed25519 keypair and parses the
+      public/private keys, but NEVER stores localPrivateKey/localCertificate
+      into any KeyManager, and the parsed publicKey is discarded unused.
+    - initializeSslContext() calls SSLContext.getInstance("TLSv1.3") then
+      sslContext.init(null, null, new SecureRandom()) - i.e. DEFAULT trust
+      managers, no client cert auth. It will not authenticate a peer.
+    - grep confirms TlsContextManager / SSLEngine / SSLContext are referenced
+      NOWHERE outside that one file. It is never constructed by DesktopService.
+    - ConnectionManager uses plain SocketChannel, never an SSLEngine.
+  Net effect: all LAN traffic is plaintext. config.security.tlsVersion and
+  requirePairing: true in config.yaml are ignored entirely.
+  Fix: generate a self-signed Ed25519 cert with BouncyCastle bcpkix (already a
+  dependency), build a KeyManager holding the private key + cert chain, wire
+  TlsContextManager into DesktopService, and wrap the SocketChannel in an
+  SSLEngine inside ConnectionManager (handshake as a new OP_CONNECT-like
+  interest, then hand the channel to the existing read/flush logic).
+  Also fix KeyPairGenerator: its deviceId derivation is a comment, and it is
+  referenced nowhere outside TlsContextManager.
+
+[E7] PairingManager is entirely empty
+  File: core/security/PairingManager.java
+  All methods empty, including initiatePairing() which MainWindow calls. The UI
+  passes a hardcoded "remote-public-key" string (MainWindow.java ~385).
+  Fix: implement PAIR_REQUEST (0x50) / PAIR_ACCEPT (0x51), fingerprint
+  verification, and TrustStore persistence. MainWindow must pass the peer's
+  real advertised public key from DeviceInfo, not a placeholder.
+
+================================================================================
+3. NON-BLOCKING BUGS / GAPS
+================================================================================
+
+[B1] DesktopService gives the local DeviceInfo a hardcoded public key
+  File: desktop/services/DesktopService.java ~51
+      "local-public-key"
+  Every peer sees the same key, which will break TOFU pairing once implemented.
+  Must come from KeyPairGenerator.
+
+[B2] Device list has no live updates
+  DesktopService registers no discovery callbacks, so the ListView only changes
+  when the user clicks "Refresh Devices". MainWindow.refreshDevices() reads
+  discoveryManager.getAllDevices() on demand. Fix: register an onDeviceAdded /
+  onDeviceRemoved callback (DiscoveryManager.addCallback exists) and push to the
+  ListView via Platform.runLater.
+
+[B3] MainWindow "New Chat" sends a hardcoded "Hello!"
+  File: desktop/ui/MainWindow.java:319
+      service.getChatManager().sendMessage(device.getDeviceId(), "Hello!");
+  Also the dialog ignores the result of dialog.showAndWait() for success and
+  never surfaces send failure. Needs a real chat view with a text field.
+
+[B4] MainWindow.showFileSender() is empty -> "Coming Soon" alert
+  File: desktop/ui/MainWindow.java ~334
+  Fix: FileChooser, then transferManager.sendFile() with progress in the
+  Transfers tab.
+
+[B5] MainWindow.updateDeviceButtons() empty; Transfers tab Cancel empty
+  updateDeviceButtons has "// TODO: Enable/disable connect/pair buttons";
+  TransferView.cancelSelectedTransfers() likewise. Fix: enable/disable based
+  on selection and connection state, call transferManager.cancelTransfer().
+
+[B6] TransferView.getAvailableDeviceIds() returns a hardcoded empty list
+  File: desktop/ui/TransferView.java
+      // For now, return empty - in real implementation...
+  The send-file target dropdown can never be populated. Fix: read from
+  discoveryManager.getAllDevices().
+
+[B7] GroupManager.sendGroupInvite() only logs
+  "Connection manager handles sending" with a log.debug. Group membership is
+  never actually sent (0x33/GROUP_INVITE equivalent).
+
+[B8] HistoryManager JSON persistence is comments only
+  Its record types (TransferRecord, etc.) are real and tested, but the
+  read/write methods do not serialise. Fix with the same Jackson mapper
+  pattern used elsewhere.
+
+[B9] desktop/services has no discovery callbacks and DiagnosticsManager never
+  sees connections, because DesktopService passes no-op lambdas. Related to E1.
+
+[B10] DesktopService.shutdown() exists but is it wired to the FX thread?
+  VERIFY: LabConnectApp stops the service on window close. Confirm the
+  selector thread, heartbeat scheduler, discovery and transfer pools all shut
+  down cleanly, otherwise repeated launches leak threads.
+
+================================================================================
+4. INFRASTRUCTURE TASKS
+================================================================================
+
+[I1] The shaded jar is platform-locked
+  Verified: 10 .so files, 0 .dll files. Building on Linux yields a Linux-only
+  jar; a Windows machine gets UnsatisfiedLinkError / LibGlassException.
+  Fix options: build per-platform in CI, or add a javafx.platform property
+  profile (untested) and produce -linux / -win classifiers.
+
+[I2] No .git for a release - now initialised with one commit and a .gitignore
+  that excludes 815MB of bundled Gradle distributions. Consider: meaningful
+  commit history, tags, a README that states the stub status up front, and a
+  LICENSE (none present - all rights reserved by default).
+
+[I3] config.yaml is committed with name: LabConnect-sudesh
+  Consider shipping config.example.yaml and gitignoring the real config, or
+  renaming the default to something generic.
+
+[I4] Android app unverified
+  android/ has real Kotlin/Gradle source but no wrapper committed and no
+  evidence it builds. Separate from the Maven build. Verify or remove.
+
+================================================================================
+5. DOCUMENTATION STATE
+================================================================================
+
+Already corrected in commit ec4d1e2 (docs now match reality):
+  - PROJECT_REPORT.md: honest status table, correct MessageType hex values
+    (HELLO=0x10, TEXT_MESSAGE=0x30, FILE_CHUNK=0x43 - the old table was wrong),
+    test count 85, Security section states TLS is NOT implemented
+  - ARCHITECTURE.md: networking/transfer/security sections flag the stubs
+  - SETUP.md, TROUBLESHOOTING.md: removed non-existent --config/--headless/
+    --diagnostics flags and -Dlabconnect.* properties; two-instance startup
+    instructions now use a separate config directory
+  - REVIEW_SUMMARY.txt: full history including the 5 transport bugs found and
+    fixed during P2P validation (C: double-flip in Connection.flush(),
+    D: undersized read buffer, E: else-if chain, F: silent selector death,
+    G: interestOps from wrong thread)
+
+Still to do:
+  - README.md does not exist. Add one: what it is, that only discovery +
+    transport work, build instructions per OS, firewall rules.
+  - SECURITY.md should state plainly that traffic is unencrypted today.
+  - PROTOCOL.md claims should be checked against MessageType.java (the report's
+    table was already found wrong once, so verify it).
+
+================================================================================
+6. SUGGESTED ORDER OF WORK
+================================================================================
+
+  Step 1  E2  wire connectToDevice()          (smallest visible win)
+  Step 2  E1  route frames in DesktopService   (unblocks all receive paths)
+  Step 3  E3  sendTextMessage                 (chat sends)
+  Step 4  E4  handleFrame                     (chat receives; end-to-end demo)
+  Step 5  B1+B2  real device key, live device list
+  Step 6  E5  TransferManager wire methods    (file transfer; transport proven)
+  Step 7  B4+B6  file chooser + target dropdown
+  Step 8  E6  TLS - biggest job, do last      (needs BouncyCastle certs +
+                                               SSLEngine in ConnectionManager)
+  Step 9  E7  pairing, after E6
+  Step 10 I1  cross-platform builds
+
+  After steps 1-4 you have a working LAN chat app. That is the highest-value
+  stopping point. Steps 6-7 give file transfer. Step 8 is what makes it safe.
+
+================================================================================
+7. THINGS THAT WILL TRIP UP A NEW CONTRIBUTOR
+================================================================================
+
+  - The build prints ERROR lines from ErrorHandlerTest on every successful run.
+    Those are the test exercising error handling, not build failures. Look for
+    "BUILD SUCCESS" / "Tests run".
+  - module-info.java exists (JPMS module com.labconnect.core) but the fat jar
+    runs on the classpath, so module boundaries are NOT enforced at runtime.
+  - Java target is 17, JDK is 21, JavaFX 21.
+  - ConnectionManager.sendFrame dispatches onto a 4-thread pool, so frame
+    ordering across frames is NOT guaranteed. Do not assert strict ordering in
+    tests - assert set equality.
+  - heartbeatInterval matters for tests: use a large value (30s) so the stale-
+    detection timer does not close connections mid-assertion.
+  - Allocate test ports with new ServerSocket(0), never a fixed port, and do
+    not close/recreate a ConnectionManager mid-test on a shared port.
+  - config.yaml is read from the CURRENT WORKING DIRECTORY. Launching two
+    instances from one directory makes them share settings. Use one directory
+    per instance.
+  - DiscoveryListener needs SO_REUSEADDR (already set) or a second instance on
+    the same host cannot bind port 50001.
