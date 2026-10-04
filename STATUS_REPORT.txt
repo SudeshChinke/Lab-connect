@@ -203,9 +203,10 @@ Commit: ec4d1e2 (single commit, clean tree)
   commit history, tags, a README that states the stub status up front, and a
   LICENSE (none present - all rights reserved by default).
 
-[I3] config.yaml is committed with name: LabConnect-sudesh
-  Consider shipping config.example.yaml and gitignoring the real config, or
-  renaming the default to something generic.
+[I3] config.yaml was committed with a personal device name - RESOLVED
+  Now ships config.example.yaml (name: MyPC) with config.yaml gitignored.
+  AppConfig.ensureConfigExists() copies the example on first launch, so a fresh
+  clone runs with no manual setup and no personal details in the repo.
 
 [I4] Android app unverified
   android/ has real Kotlin/Gradle source but no wrapper committed and no

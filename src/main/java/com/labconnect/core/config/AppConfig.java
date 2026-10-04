@@ -62,7 +62,33 @@ public class AppConfig {
     }
 
     public static AppConfig load() {
+        ensureConfigExists();
         return load(CONFIG_PATH);
+    }
+
+    /**
+     * Copies {@code config.example.yaml} to {@code config.yaml} on first launch so
+     * a fresh clone runs without manual setup. Any existing config is left alone.
+     */
+    private static void ensureConfigExists() {
+        if (Files.exists(CONFIG_PATH)) {
+            return;
+        }
+        Path example = CONFIG_PATH.resolveSibling("config.example.yaml");
+        try {
+            if (Files.exists(example)) {
+                Files.copy(example, CONFIG_PATH);
+                System.out.println("Created " + CONFIG_PATH + " from config.example.yaml");
+            } else {
+                // No example present (e.g. running from a packaged jar): write
+                // the defaults so the user gets a real file to edit.
+                new AppConfig().save(CONFIG_PATH);
+                System.out.println("Created default " + CONFIG_PATH);
+            }
+        } catch (IOException e) {
+            System.err.println("Could not create " + CONFIG_PATH + ": " + e.getMessage()
+                    + " - continuing with defaults");
+        }
     }
 
     /**

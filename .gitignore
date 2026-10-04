@@ -27,6 +27,12 @@ logs/
 downloads/
 config.local.yaml
 
+# ---- Per-machine config ----
+# config.yaml holds this machine's device name and ports. Ship the example
+# instead so a fresh clone has no personal details committed.
+config.yaml
+!config.example.yaml
+
 # ---- OS / editor noise ----
 .DS_Store
 Thumbs.db

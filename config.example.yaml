@@ -1,0 +1,30 @@
+---
+# LabConnect configuration.
+#
+# This file was copied from config.example.yaml on first launch. Edit it freely.
+# On startup LabConnect looks for ./config.yaml in the current working directory.
+# If it is missing, this example is copied there automatically.
+#
+# NOTE: config.yaml is intentionally NOT tracked in git so each machine can
+# have its own device name and ports without dirtying the repository.
+device:
+  name: MyPC
+  type: DESKTOP
+network:
+  tcpPort: 5000
+  discoveryPort: 50001
+  multicastGroup: 239.255.255.250
+  announceIntervalSec: 5
+  heartbeatIntervalSec: 5
+  connectionTimeoutSec: 10
+transfer:
+  chunkSize: 65536
+  maxConcurrentTransfers: 4
+  resumeEnabled: true
+security:
+  requirePairing: true
+  tlsVersion: TLSv1.3
+logging:
+  level: INFO
+  fileEnabled: true
+  consoleEnabled: true

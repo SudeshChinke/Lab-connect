@@ -1,6 +1,6 @@
 ================================================================================
 LabConnect - Review & Fix Log
-Location: /home/sudesh/Desktop/LabConnect
+Location: LabConnect/
 Host: Linux Mint 22.3 (x86_64) | JDK 21.0.12 | Maven 3.8.7
 Last updated: 2026-10-01
 ================================================================================
@@ -69,7 +69,7 @@ Tests ............ 78 unit/integration tests - ALL PASSING
          Scene but never called stage.show()). Launcher now delegates via
          Application.launch(). Added DesktopService.shutdown() to release
          discovery/transfer/connection resources on app exit.
-  VERIFIED: a real 1000x700 window titled "LabConnect - LabConnect-sudesh"
+  VERIFIED: a real 1000x700 window titled "LabConnect - <device name from config>"
          appears on DISPLAY :0 (confirmed via wmctrl/xwininfo). Log ends with
          "LabConnect UI is running" and zero exceptions.
 
