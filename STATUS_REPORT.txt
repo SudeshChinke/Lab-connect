@@ -1,13 +1,13 @@
 LabConnect - Engineering Status Report
 Generated: 2026-10-07 (supersedes the 2026-10-04 report)
-Commit: 63bf1ef + doc updates (clean tree)
+Commit: 735f964 + doc updates (clean tree)
 
 ================================================================================
 1. BUILD / TEST STATE  (verified 2026-10-07)
 ================================================================================
 
   mvn clean package      -> BUILD SUCCESS
-  Tests: 88/88 passing, zero failures
+  Tests: 95/95 passing, zero failures
   No uncommitted changes, no stray processes
 
   PASSING test suites:
@@ -15,7 +15,8 @@ Commit: 63bf1ef + doc updates (clean tree)
     MultiDeviceTest 3, DiscoveryManagerTest 3, ChatEndToEndTest 3,
     TextMessageTest 5, MessageDeduplicatorTest 4, GroupTest 5,
     TransferTest 8, ResumableTransferTest 4, HistoryManagerTest 10,
-    ErrorHandlerTest 13, DiagnosticsManagerTest 9, ConfigTest 7
+    ErrorHandlerTest 13, DiagnosticsManagerTest 9, ConfigTest 7,
+    IdentityStoreTest 4, DesktopServiceTest 3
 
   What is genuinely verified working:
     - UDP multicast discovery, bidirectional
@@ -27,10 +28,16 @@ Commit: 63bf1ef + doc updates (clean tree)
       a typed message arrives at the peer's ChatManager callback with its
       payload intact, a MESSAGE_ACK delivery receipt returns to the sender,
       and a reply travels back over the same connection
+    - PERSISTED DEVICE IDENTITY (IdentityStoreTest + DesktopServiceTest,
+      new): a real Ed25519 key pair is generated on first run, reloaded on
+      restart with the same deviceId, and each instance gets a distinct
+      public key that peers see over HELLO
+    - LIVE DEVICE LIST: DesktopService fires setOnDeviceListChanged on
+      registry add/remove, which MainWindow uses to rebuild the ListView
     - Config YAML load/save round trip
     - JavaFX GUI launches, device list populates from live discovery
 
-  TESTING CAVEAT (still applies to remaining work): most of the 88 tests are
+  TESTING CAVEAT (still applies to remaining work): most of the 95 tests are
   unit tests on data classes, priority queues, checksum engine and the config
   mapper. Chat now has a true end-to-end test, but file transfer, TLS and
   pairing do NOT. Any new feature MUST have an integration test asserting real
@@ -128,18 +135,26 @@ Commit: 63bf1ef + doc updates (clean tree)
 3. NON-BLOCKING BUGS / GAPS
 ================================================================================
 
-[B1] DesktopService gives the local DeviceInfo a hardcoded public key
-  File: desktop/services/DesktopService.java ~51
-      "local-public-key"
-  Every peer sees the same key, which will break TOFU pairing once implemented.
-  Must come from KeyPairGenerator.
+[B1] DesktopService gives the local DeviceInfo a hardcoded public key -> RESOLVED
+  2026-10-07: IdentityStore (core.security) loads or generates an Ed25519 key
+  pair in ./keystore.dat on startup (owner-only perms where POSIX is supported;
+  a corrupt file regenerates rather than refusing to start). DesktopService
+  advertises that public key in DeviceInfo and HELLO, and derives the deviceId
+  from it via KeyPairGenerator.deriveDeviceId (now a real SHA-256 fingerprint;
+  previously dead code with a placeholder implementation) - so identity is
+  stable across restarts, which TOFU pairing will need. New constructor
+  overload takes the identity path so tests use per-instance files; sharing a
+  directory still means sharing an identity, exactly as with config.yaml.
+  Covered by IdentityStoreTest (4) and DesktopServiceTest (3).
 
-[B2] Device list has no live updates
-  DesktopService registers no discovery callbacks, so the ListView only changes
-  when the user clicks "Refresh Devices". MainWindow.refreshDevices() reads
-  discoveryManager.getAllDevices() on demand. Fix: register an onDeviceAdded /
-  onDeviceRemoved callback (DiscoveryManager.addCallback exists) and push to the
-  ListView via Platform.runLater.
+[B2] Device list has no live updates -> RESOLVED
+  2026-10-07: DesktopService registers a discovery callback and exposes
+  setOnDeviceListChanged(Consumer<DeviceInfo>). MainWindow subscribes via
+  Platform.runLater and rebuilds the ListView through the new
+  updateDeviceList(), which preserves the current selection by deviceId so
+  periodic announcements do not clear a selection mid-click. DiscoveryManager
+  gained a public removeDevice() (TTL expiry / manual removal notify the same
+  listeners). Covered by DesktopServiceTest.firesDeviceListCallbackWhenRegistryChanges.
 
 [B3] MainWindow "New Chat" hardcodes "Hello!" -> RESOLVED (mostly)
   2026-10-07: New Chat now asks for the device AND the message text, surfaces
@@ -260,7 +275,7 @@ Still to do:
   DONE    Step 2  E1  route frames in DesktopService   (2026-10-07)
   DONE    Step 3  E3  sendTextMessage                 (2026-10-07)
   DONE    Step 4  E4  handleFrame                     (2026-10-07)
-  Step 5  B1+B2  real device key, live device list
+  DONE    Step 5  B1+B2  real device key, live device list (2026-10-07)
   Step 6  E5  TransferManager wire methods    (file transfer; transport proven)
   Step 7  B4+B6  file chooser + target dropdown
   Step 8  E6  TLS - biggest job, do last      (needs BouncyCastle certs +
@@ -268,9 +283,12 @@ Still to do:
   Step 9  E7  pairing, after E6
   Step 10 I1  cross-platform builds
 
-  Steps 1-4 are complete: this is now a working LAN chat app, proven by
-  ChatEndToEndTest over live sockets. Next up is step 5 (quick), then
-  steps 6-7 give file transfer. Step 8 is what makes it safe.
+  Steps 1-5 are complete: this is now a working LAN chat app with a real
+  persisted device identity, proven by ChatEndToEndTest, IdentityStoreTest
+  and DesktopServiceTest over live sockets. Next up is step 6 (file
+  transfer; transport is already proven), then step 7. Step 8 is what
+  makes it safe. Note: E6/E7 work should reuse DesktopService.getIdentity()
+  as the key source instead of TlsContextManager generating a second one.
 
 ================================================================================
 7. THINGS THAT WILL TRIP UP A NEW CONTRIBUTOR
@@ -292,5 +310,9 @@ Still to do:
   - config.yaml is read from the CURRENT WORKING DIRECTORY. Launching two
     instances from one directory makes them share settings. Use one directory
     per instance.
+  - keystore.dat (device identity) follows the same rule: it lives in the CWD
+    and sharing it means sharing a deviceId. Tests must use the
+    DesktopService(config, identityFile) overload with distinct paths (e.g.
+    @TempDir), or two test instances will claim to be the same device.
   - DiscoveryListener needs SO_REUSEADDR (already set) or a second instance on
     the same host cannot bind port 50001.

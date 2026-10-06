@@ -15,8 +15,11 @@ stubbed and never invoked by the running application, so:
 - `config.security.tlsVersion` and `config.security.requirePairing` are read
   but have no effect.
 
-What *is* implemented: the framing layer, heartbeat liveness, and SHA-256 file
-integrity verification (when file transfer lands). Treat this document as the
+What *is* implemented: the framing layer, heartbeat liveness, the persisted
+Ed25519 device identity (`IdentityStore` — key generation, key-derived stable
+deviceId, `keystore.dat` persistence; peer keys are exchanged in HELLO but not
+yet authenticated), and SHA-256 file integrity verification (when file transfer
+lands). Treat this document as the
 specification the remaining security work (blocking errors E6/E7 in
 `STATUS_REPORT.txt`) must deliver.
 
@@ -40,9 +43,16 @@ specification the remaining security work (blocking errors E6/E7 in
 ## Identity & Authentication
 
 ### Device Identity
-- **Ed25519 key pair** generated on first run
-- **Device ID**: `DEVICE-` + first 8 chars of public key fingerprint
-- Stored in `keystore.dat` (encrypted with device password optional)
+*(Implemented 2026-10-07, covered by IdentityStoreTest and DesktopServiceTest.)*
+- **Ed25519 key pair** generated on first run by `IdentityStore`
+- **Device ID**: `DEVICE-` + first 8 bytes of the SHA-256 public key
+  fingerprint (hex), so the id is derived from the key, not random
+- Stored in `keystore.dat` in the working directory (one directory per
+  instance, same convention as `config.yaml`); identity survives restarts
+- File is created owner-only (`0600`) where the filesystem supports POSIX
+  permissions. It is **not password-encrypted yet** — see Data at Rest.
+- A corrupt or unreadable `keystore.dat` is regenerated (logged), which
+  gives the device a NEW identity; paired peers will no longer recognize it
 
 ### Pairing (Trust-on-First-Use)
 1. Device A initiates pairing with Device B
@@ -158,9 +168,16 @@ the status note at the top of this document.
 ## Data at Rest
 
 ### Keystore (`keystore.dat`)
-- Ed25519 private key encrypted with AES-256-GCM
-- Key derived from user password (PBKDF2, 100k iterations)
-- Optional: can run without password (less secure)
+*(Current state, honest version — the AES-GCM password scheme below the
+line is the target design, not what is implemented today.)*
+- Two Base64 lines: Ed25519 private key, then public key — **plaintext**
+- Created with owner-only permissions (`0600`) on POSIX filesystems
+- Generated on first run; malformed files are regenerated (logged)
+- NOT encrypted at rest yet: no device password, no PBKDF2, no AES-256-GCM
+
+*Planned:* encrypt the private key with AES-256-GCM, key derived from a
+device password (PBKDF2, 100k iterations); running without a password stays
+possible but weaker.
 
 ### Truststore (`truststore.dat`)
 - Plaintext JSON (public keys only)
