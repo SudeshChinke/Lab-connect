@@ -1,88 +1,80 @@
 LabConnect - Engineering Status Report
-Generated: 2026-10-04
-Commit: ec4d1e2 (single commit, clean tree)
+Generated: 2026-10-07 (supersedes the 2026-10-04 report)
+Commit: 63bf1ef + doc updates (clean tree)
 
 ================================================================================
-1. BUILD / TEST STATE  (verified 2026-10-04)
+1. BUILD / TEST STATE  (verified 2026-10-07)
 ================================================================================
 
   mvn clean package      -> BUILD SUCCESS
-  Tests: 85/85 passing, zero failures
+  Tests: 88/88 passing, zero failures
   No uncommitted changes, no stray processes
 
   PASSING test suites:
     FrameCodecTest 8, ConnectionManagerTest 1, P2PFrameDeliveryTest 5,
-    MultiDeviceTest 3, DiscoveryManagerTest 3, TextMessageTest 5,
-    MessageDeduplicatorTest 4, GroupTest 5, TransferTest 8,
-    ResumableTransferTest 4, HistoryManagerTest 10, ErrorHandlerTest 13,
-    DiagnosticsManagerTest 9, ConfigTest 7
+    MultiDeviceTest 3, DiscoveryManagerTest 3, ChatEndToEndTest 3,
+    TextMessageTest 5, MessageDeduplicatorTest 4, GroupTest 5,
+    TransferTest 8, ResumableTransferTest 4, HistoryManagerTest 10,
+    ErrorHandlerTest 13, DiagnosticsManagerTest 9, ConfigTest 7
 
-  What is genuinely verified working (two real OS processes on one host):
+  What is genuinely verified working:
     - UDP multicast discovery, bidirectional
     - TCP non-blocking transport, framing, heartbeats, stale detection
     - Frame delivery BOTH directions, incl. 64KB chunks and 512KB payloads
       across partial writes (P2PFrameDeliveryTest)
+    - LAN CHAT END-TO-END (ChatEndToEndTest, new): two full DesktopService
+      instances over live sockets - connect with HELLO identity exchange,
+      a typed message arrives at the peer's ChatManager callback with its
+      payload intact, a MESSAGE_ACK delivery receipt returns to the sender,
+      and a reply travels back over the same connection
     - Config YAML load/save round trip
     - JavaFX GUI launches, device list populates from live discovery
 
-  CRITICAL TESTING CAVEAT: the existing tests are almost all unit tests on data
-  classes, priority queues, checksum engine and the config mapper. They do NOT
-  exercise the end-to-end application paths. This is precisely how the app
-  shipped with 51 empty methods and every test green. Any new feature MUST have
-  an integration test asserting real payload arrival, not just isConnected().
+  TESTING CAVEAT (still applies to remaining work): most of the 88 tests are
+  unit tests on data classes, priority queues, checksum engine and the config
+  mapper. Chat now has a true end-to-end test, but file transfer, TLS and
+  pairing do NOT. Any new feature MUST have an integration test asserting real
+  payload arrival, not just isConnected().
 
 ================================================================================
-2. BLOCKING ERRORS  (app cannot do its advertised job)
+2. BLOCKING ERRORS  (E1-E4 RESOLVED 2026-10-07, E5-E7 still open)
 ================================================================================
 
-[E1] DesktopService never routes frames -> chat can never work
-  File: desktop/services/DesktopService.java:33-39
-  Problem: ConnectionManager is constructed with three no-op callbacks:
-      conn -> {},          // onConnectionEstablished
-      conn -> {},          // onConnectionClosed
-      frame -> {}          // onFrameReceived
-  The onFrameReceived callback is the ONLY path by which inbound frames reach
-  the application. Because it is empty, ChatManager.handleFrame() and
-  TransferManager.handleFrame() are never invoked. Even after implementing the
-  chat methods, no message would ever arrive.
-  Fix: route frames by MessageType into ChatManager / TransferManager /
-  PairingManager / DiagnosticsManager. Register the same routing as a real
-  onFrameReceived lambda, and use onConnectionEstablished/Closed to update UI
-  state and the DiagnosticsManager connection table.
+[E1] DesktopService never routes frames -> RESOLVED
+  DesktopService now registers real ConnectionManager callbacks
+  (handleConnectionEstablished / handleConnectionClosed / routeFrame) instead of
+  three no-ops. routeFrame() dispatches by MessageType into ChatManager
+  (TEXT/GROUP/ACK/READ), TransferManager (FILE_*), and logs pairing frames as
+  not-yet-implemented. onConnectionEstablished/Closed log DiagnosticsManager
+  events and fire a UI connection-change listener.
+  NOTE: HELLO is consumed inside ConnectionManager (see E2) - it binds the
+  connection to the peer's deviceId and is not re-routed.
 
-[E2] DesktopService.connectToDevice() is empty -> Connect button is a no-op
-  File: desktop/services/DesktopService.java:124
-      // TODO: Implement connection logic
-  Fix: look the device up via discoveryManager.getDevice(deviceId), then
-  connectionManager.connect(device.ipAddress(), device.tcpPort()), then
-  sendHello() with the real local deviceId, name and public key so the peer can
-  map the connection to a deviceId. Without sendHello, getConnection(deviceId)
-  can never match and all outbound sends fail the "not connected" check.
+[E2] DesktopService.connectToDevice() is empty -> RESOLVED
+  Implemented: looks the device up via discoveryManager.getDevice(), refuses
+  duplicate connections (getConnectionByAddress), then connect()s. The HELLO
+  identity exchange happens in handleConnectionEstablished - both sides send
+  HELLO when the TCP handshake completes, and ConnectionManager parses the
+  incoming HELLO payload and calls connection.setRemoteDeviceId(deviceId).
+  Without that binding getConnection(deviceId) can never match.
+  Returns boolean so the UI can surface failure.
 
-[E3] ChatManager.sendTextMessage() and sendGroupMessage() are empty
-  File: core/messaging/ChatManager.java:101 and :105
-      private void sendTextMessage(Connection conn, TextMessage message) {
-          // Send text message frame
-      }
-  sendMessage() does all the surrounding bookkeeping correctly (resolves the
-  connection, builds the TextMessage, stores it, registers a PendingAck, fires
-  onMessageSent) and then calls this empty method. So the UI will appear to
-  "send" a message that never leaves the machine.
-  Fix: serialize TextMessage to JSON (Jackson ObjectMapper + JavaTimeModule is
-  already the pattern used in DiscoveryListener) and call
-  connectionManager.sendFrame(conn, Frame.create(MessageType.TEXT_MESSAGE.value(),
-  (byte) 0, UUID.randomUUID(), json.getBytes(UTF_8))).
-  Same for GROUP_MESSAGE (0x33).
+[E3] ChatManager.sendTextMessage() and sendGroupMessage() are empty -> RESOLVED
+  sendMessageFrame() serializes TextMessage to JSON (Jackson + JavaTimeModule,
+  WRITE_DATES_AS_TIMESTAMPS disabled) and queues
+  Frame(TEXT_MESSAGE|GROUP_MESSAGE, messageId = message.messageId()). The frame
+  id doubles as the ack correlation id. sendMessage/sendGroupMessage now return
+  boolean; the PendingAck is registered BEFORE the frame is queued to avoid
+  racing a fast ack.
 
-[E4] ChatManager.handleFrame() is empty -> inbound chat dropped
-  File: core/messaging/ChatManager.java:93
-      public void handleFrame(FrameCodec.Frame frame) {
-          // Handle incoming messages
-      }
-  Fix: switch on frame.type(): TEXT_MESSAGE (0x30) deserialize TextMessage and
-  pass to onMessageReceived; MESSAGE_ACK (0x31) resolve the PendingAck in
-  pendingAcks; GROUP_MESSAGE (0x33) route to the group chat. Deduplicate by
-  messageId (MessageDeduplicator already exists and is tested - reuse it).
+[E4] ChatManager.handleFrame() is empty -> RESOLVED
+  Switches on frame type: TEXT/GROUP messages are deserialized, deduplicated
+  via MessageDeduplicator(10000), stored in the chat, delivered to
+  onMessageReceived, and acknowledged with a MESSAGE_ACK (0x31) carrying the
+  original frame messageId. MESSAGE_ACK resolves the sender's PendingAck and
+  fires onMessageDelivered with status DELIVERED; MESSAGE_READ fires
+  onMessageRead. Duplicates are re-acknowledged but not re-delivered.
+  Covered by ChatEndToEndTest (payload arrival + ack round trip + reverse).
 
 [E5] TransferManager: all four wire methods are empty -> transfers send zero bytes
   File: core/transfer/TransferManager.java
@@ -149,11 +141,11 @@ Commit: ec4d1e2 (single commit, clean tree)
   onDeviceRemoved callback (DiscoveryManager.addCallback exists) and push to the
   ListView via Platform.runLater.
 
-[B3] MainWindow "New Chat" sends a hardcoded "Hello!"
-  File: desktop/ui/MainWindow.java:319
-      service.getChatManager().sendMessage(device.getDeviceId(), "Hello!");
-  Also the dialog ignores the result of dialog.showAndWait() for success and
-  never surfaces send failure. Needs a real chat view with a text field.
+[B3] MainWindow "New Chat" hardcodes "Hello!" -> RESOLVED (mostly)
+  2026-10-07: New Chat now asks for the device AND the message text, surfaces
+  "not connected" failures, and inbound messages appear in the Chats tab via
+  DesktopService.setOnMessageReceived. Still open: a dedicated chat window
+  with per-conversation scrollback (the Chats tab shows preview lines only).
 
 [B4] MainWindow.showFileSender() is empty -> "Coming Soon" alert
   File: desktop/ui/MainWindow.java ~334
@@ -180,13 +172,34 @@ Commit: ec4d1e2 (single commit, clean tree)
   read/write methods do not serialise. Fix with the same Jackson mapper
   pattern used elsewhere.
 
-[B9] desktop/services has no discovery callbacks and DiagnosticsManager never
-  sees connections, because DesktopService passes no-op lambdas. Related to E1.
+[B9] No discovery callbacks / DiagnosticsManager never saw connections
+  -> RESOLVED with E1 (2026-10-07): real connection callbacks now log
+  DiagnosticEvents, and a UI listener updates the connection counter.
 
-[B10] DesktopService.shutdown() exists but is it wired to the FX thread?
-  VERIFY: LabConnectApp stops the service on window close. Confirm the
-  selector thread, heartbeat scheduler, discovery and transfer pools all shut
-  down cleanly, otherwise repeated launches leak threads.
+[B10] DesktopService.shutdown() wiring -> RESOLVED (verified 2026-10-07)
+  LabConnectApp.stop() calls service.shutdown() on window close.
+  shutdown() closes discovery, transfer, connection (joins the selector
+  thread, shuts the heartbeat scheduler and worker pool), pairing, and
+  diagnostics - the last two were previously leaked. ChatEndToEndTest
+  exercises this path twice per run with no thread buildup.
+
+Bugs found and fixed while implementing E1-E4 (2026-10-07):
+  - DesktopService passed deviceId and deviceName SWAPPED to
+    DeviceInfo.createLocal, so the announced deviceId was the device name
+    and could never equal the HELLO deviceId - discovery and chat identity
+    could never have matched. Also made the listener's self-filter compare
+    device names instead of ids.
+  - ConnectionManager's HELLO payload had unquoted capabilities
+    ([FILE_TRANSFER, ...]) - invalid JSON, so no peer could ever parse the
+    deviceId out of it.
+  - ConnectionManager.getConnection() NPE'd on connections whose HELLO had
+    not arrived (remoteDeviceId null); now null-safe.
+  - DiagnosticsManager.collectMetrics() NPE'd the same way into a
+    ConcurrentHashMap, which would have silently cancelled the scheduled
+    metrics task forever; getConnectionStatuses() also NPE'd in reports.
+  - ChatManager.sendMessage() registered the PendingAck after queueing the
+    frame - a fast peer could ack first and the receipt would be dropped.
+  - GroupManager/ChatManager group sends could NPE on unbound connections.
 
 ================================================================================
 4. INFRASTRUCTURE TASKS
@@ -230,20 +243,23 @@ Already corrected in commit ec4d1e2 (docs now match reality):
     G: interestOps from wrong thread)
 
 Still to do:
-  - README.md does not exist. Add one: what it is, that only discovery +
-    transport work, build instructions per OS, firewall rules.
-  - SECURITY.md should state plainly that traffic is unencrypted today.
-  - PROTOCOL.md claims should be checked against MessageType.java (the report's
-    table was already found wrong once, so verify it).
+  - README.md now exists (commit 69c6442) and its status section was updated
+    for chat on 2026-10-07.
+  - SECURITY.md now states plainly at the top that traffic is unencrypted
+    today, and its Message Types table was corrected to the real MessageType
+    values (the old table claimed TLS encryption with wrong hex codes).
+  - PROTOCOL.md claims verified against MessageType.java on 2026-10-07:
+    HELLO=0x10, TEXT_MESSAGE=0x30, MESSAGE_ACK=0x31, FILE_CHUNK=0x43 - they
+    match. (PROJECT_REPORT.md's table was corrected in ec4d1e2.)
 
 ================================================================================
 6. SUGGESTED ORDER OF WORK
 ================================================================================
 
-  Step 1  E2  wire connectToDevice()          (smallest visible win)
-  Step 2  E1  route frames in DesktopService   (unblocks all receive paths)
-  Step 3  E3  sendTextMessage                 (chat sends)
-  Step 4  E4  handleFrame                     (chat receives; end-to-end demo)
+  DONE    Step 1  E2  wire connectToDevice()          (2026-10-07)
+  DONE    Step 2  E1  route frames in DesktopService   (2026-10-07)
+  DONE    Step 3  E3  sendTextMessage                 (2026-10-07)
+  DONE    Step 4  E4  handleFrame                     (2026-10-07)
   Step 5  B1+B2  real device key, live device list
   Step 6  E5  TransferManager wire methods    (file transfer; transport proven)
   Step 7  B4+B6  file chooser + target dropdown
@@ -252,8 +268,9 @@ Still to do:
   Step 9  E7  pairing, after E6
   Step 10 I1  cross-platform builds
 
-  After steps 1-4 you have a working LAN chat app. That is the highest-value
-  stopping point. Steps 6-7 give file transfer. Step 8 is what makes it safe.
+  Steps 1-4 are complete: this is now a working LAN chat app, proven by
+  ChatEndToEndTest over live sockets. Next up is step 5 (quick), then
+  steps 6-7 give file transfer. Step 8 is what makes it safe.
 
 ================================================================================
 7. THINGS THAT WILL TRIP UP A NEW CONTRIBUTOR

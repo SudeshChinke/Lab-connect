@@ -3,6 +3,23 @@
 ## Overview
 LabConnect implements a security-first decentralized architecture with no central authority. All security decisions are made peer-to-peer.
 
+## Current Implementation Status (read this first)
+
+**All LAN traffic is plaintext today.** The TLS 1.3/mTLS layer, pairing, and
+trust store described in this document are the *designed* model. The
+corresponding code (`TlsContextManager`, `PairingManager`, `TrustStore`) is
+stubbed and never invoked by the running application, so:
+
+- Chat messages and file transfers travel unencrypted on the local network.
+- Peers are not authenticated — any host can open a connection.
+- `config.security.tlsVersion` and `config.security.requirePairing` are read
+  but have no effect.
+
+What *is* implemented: the framing layer, heartbeat liveness, and SHA-256 file
+integrity verification (when file transfer lands). Treat this document as the
+specification the remaining security work (blocking errors E6/E7 in
+`STATUS_REPORT.txt`) must deliver.
+
 ## Threat Model
 
 ### In Scope
@@ -50,6 +67,8 @@ LabConnect implements a security-first decentralized architecture with no centra
 - **Verification**: Peer certificate validated against truststore
 
 ### Connection Flow
+*(Designed flow — steps 2, 3 and 5 are not implemented yet; today it is
+plain TCP + HELLO. See the status note above.)*
 ```
 1. TCP connect
 2. TLS handshake (mTLS)
@@ -69,20 +88,23 @@ LabConnect implements a security-first decentralized architecture with no centra
 ```
 
 ### Message Types
+Current wire values (from `MessageType.java`). Nothing is encrypted yet — see
+the status note at the top of this document.
+
 | Type | Value | Encrypted | Signed |
 |------|-------|-----------|--------|
-| HELLO | 0x01 | Yes (TLS) | No |
-| HEARTBEAT | 0x02 | Yes | No |
-| TEXT_MESSAGE | 0x10 | Yes | No |
-| FILE_METADATA | 0x20 | Yes | No |
-| FILE_CHUNK | 0x21 | Yes | No |
-| PAIRING_REQUEST | 0x30 | Yes | Yes |
-| PAIRING_RESPONSE | 0x31 | Yes | Yes |
+| HELLO | 0x10 | No | No |
+| HEARTBEAT | 0x14 | No | No |
+| TEXT_MESSAGE | 0x30 | No | No |
+| MESSAGE_ACK | 0x31 | No | No |
+| FILE_CHUNK | 0x43 | No | No |
+| PAIR_REQUEST | 0x50 | No | No |
+| PAIR_ACCEPT | 0x51 | No | No |
 
 ### Integrity
-- All frames protected by TLS record layer (AEAD)
-- File chunks: Additional SHA-256 checksum in metadata
-- Full file: SHA-256 verified on completion
+- **Designed**: all frames protected by TLS record layer (AEAD)
+- **Implemented**: file chunks carry an additional SHA-256 checksum in
+  metadata; full file SHA-256 is verified on completion
 
 ---
 
