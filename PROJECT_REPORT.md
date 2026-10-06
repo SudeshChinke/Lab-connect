@@ -8,14 +8,16 @@ chat, and resumable file transfer across Java/JavaFX desktop and Kotlin/Android
 mobile platforms. It operates entirely offline with no central server, cloud
 dependency, or internet requirement.
 
-**Status (verified, not aspirational)**: 85 automated tests pass. UDP multicast
+**Status (verified, not aspirational)**: 88 automated tests pass. UDP multicast
 discovery and the TCP transport have been validated between two separate
 processes on one host — peers discover each other and exchange framed messages
-in both directions.
+in both directions. LAN chat is implemented end-to-end and covered by an
+integration test that asserts real payload arrival between two service
+instances over live sockets.
 
-**However, the application layer is not finished.** Chat sending/receiving,
-file transfer, and TLS (mutual auth / pairing) are declared in these classes but
-their methods have empty bodies, so those features do not work yet:
+**However, parts of the application layer are not finished.** File transfer and
+TLS (mutual auth / pairing) are declared in these classes but their methods have
+empty bodies, so those features do not work yet:
 
 | Area | State |
 |------|-------|
@@ -23,11 +25,11 @@ their methods have empty bodies, so those features do not work yet:
 | TCP transport, framing, heartbeats | Implemented, verified working |
 | Config (YAML) load/save | Implemented, verified working |
 | JavaFX GUI + device list | Implemented, verified working |
-| Chat (`ChatManager`) | **Stub — methods are empty** |
+| Chat (`ChatManager`) | Implemented, verified end-to-end (send, receive, acks) |
+| Connect button (`DesktopService.connectToDevice`) | Implemented, verified end-to-end |
 | File transfer (`TransferManager`) | **Stub — sends zero bytes** |
 | TLS 1.3 mTLS (`TlsContextManager`) | **Stub — transport is plaintext** |
 | Pairing / TOFU (`KeyPairManager`, `PairingManager`) | **Stub** |
-| Connect button (`DesktopService.connectToDevice`) | **Stub — does nothing** |
 | Android client | Not built or verified here |
 
 Phase 17 hardware validation is genuinely still pending, and it cannot succeed
@@ -135,7 +137,7 @@ Until TLS is implemented, any traffic on the LAN is readable by a third party.
 
 ## Test Results
 
-### Unit & Integration Tests (85 total)
+### Unit & Integration Tests (88 total)
 
 | Test Suite | Tests | Status |
 |------------|-------|--------|
@@ -144,6 +146,7 @@ Until TLS is implemented, any traffic on the LAN is readable by a third party.
 | P2PFrameDeliveryTest | 5 | ✅ Pass |
 | MultiDeviceTest | 3 | ✅ Pass |
 | DiscoveryManagerTest | 3 | ✅ Pass |
+| ChatEndToEndTest | 3 | ✅ Pass |
 | TextMessageTest | 5 | ✅ Pass |
 | MessageDeduplicatorTest | 4 | ✅ Pass |
 | GroupTest | 5 | ✅ Pass |
@@ -154,7 +157,13 @@ Until TLS is implemented, any traffic on the LAN is readable by a third party.
 | DiagnosticsManagerTest | 9 | ✅ Pass |
 | ConfigTest | 7 | ✅ Pass |
 
-**All 85 tests passing** — zero failures, zero errors.
+**All 88 tests passing** — zero failures, zero errors.
+
+`ChatEndToEndTest` is the suite that proves the chat feature works: two full
+DesktopService instances connect over a real TCP socket, exchange HELLO
+identities, and a typed message arrives at the peer's ChatManager callback with
+its payload intact, followed by a delivery receipt returning to the sender and
+a reply travelling back over the same connection.
 
 `P2PFrameDeliveryTest` is the suite that proves frames actually reach a peer over
 a real socket (single frame, default 64KB file chunk, 512KB payload forcing

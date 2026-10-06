@@ -106,6 +106,15 @@ public final class DiscoveryManager implements AutoCloseable {
         registry.addOrUpdate(manual);
     }
 
+    /**
+     * Adds or updates a peer in the registry without waiting for a UDP
+     * announcement. Used by integration tests and available for manual
+     * entry of known peers.
+     */
+    public void registerDevice(DeviceInfo info) {
+        registry.addOrUpdate(DiscoveredDevice.fromDeviceInfo(info, java.time.Instant.now()));
+    }
+
     @Override
     public void close() {
         started = false;

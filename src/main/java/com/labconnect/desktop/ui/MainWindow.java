@@ -35,6 +35,7 @@ public class MainWindow {
     
     private BorderPane root;
     private ListView<DeviceItem> deviceListView;
+    private ListView<ChatItem> chatListView;
     private TabPane tabPane;
     private Tab devicesTab;
     private Tab chatsTab;
@@ -166,7 +167,7 @@ public class MainWindow {
         groupBtn.setOnAction(e -> showCreateGroupDialog());
         topBar.getChildren().addAll(newChatBtn, groupBtn);
         
-        ListView<ChatItem> chatListView = new ListView<>();
+        chatListView = new ListView<>();
         chatListView.setCellFactory(lv -> new ChatListCell());
         chatListView.setPlaceholder(new Label("No active chats"));
         VBox.setVgrow(chatListView, Priority.ALWAYS);
@@ -256,10 +257,38 @@ public class MainWindow {
             updateDeviceButtons(sel != null);
         });
         
-        // Connection manager events
-        service.getConnectionManager().getAllConnections().forEach(conn -> {
-            // TODO: Add connection listeners
-        });
+        // Push inbound messages and connection changes into the UI. These
+        // callbacks fire on networking threads, so hop to the FX thread.
+        service.setOnMessageReceived(msg ->
+            Platform.runLater(() -> upsertChatItem(displayNameOf(msg.senderId()), msg.content())));
+        service.setOnMessageDelivered(msg -> Platform.runLater(() -> chatListView.refresh()));
+        service.setOnConnectionChange(() -> Platform.runLater(this::updateConnectionCount));
+    }
+    
+    /** Resolves a deviceId to a friendly name via discovery, falling back to the id. */
+    private String displayNameOf(String deviceId) {
+        return service.getDiscoveryManager().getDevice(deviceId)
+            .map(DeviceInfo::deviceName)
+            .orElse(deviceId);
+    }
+    
+    /** Adds or refreshes the preview line of a chat in the Chats tab. */
+    private void upsertChatItem(String peerName, String lastMessage) {
+        for (ChatItem item : chatListView.getItems()) {
+            if (item.name.equals(peerName)) {
+                item.lastMessage = lastMessage;
+                chatListView.refresh();
+                return;
+            }
+        }
+        chatListView.getItems().add(0, new ChatItem(peerName, lastMessage));
+    }
+    
+    private void updateConnectionCount() {
+        long count = service.getConnectionManager().getAllConnections().stream()
+            .filter(com.labconnect.core.networking.Connection::isConnected)
+            .count();
+        connectionCountLabel.setText("Connections: " + count);
     }
     
     private void updateDeviceButtons(boolean hasSelection) {
@@ -308,15 +337,43 @@ public class MainWindow {
     }
     
     private void showNewChatDialog() {
-        ChoiceDialog<DeviceItem> dialog = new ChoiceDialog<>();
-        dialog.setTitle("New Chat");
-        dialog.setHeaderText("Select a device to start a chat");
-        dialog.setContentText("Device:");
-        dialog.getItems().addAll(service.getDiscoveryManager().getAllDevices().stream()
-            .map(DeviceItem::new).toList());
+        List<DeviceItem> devices = service.getDiscoveryManager().getAllDevices().stream()
+            .map(DeviceItem::new).toList();
+        if (devices.isEmpty()) {
+            showAlert(Alert.AlertType.INFORMATION, "No Devices",
+                "No devices discovered yet. Click Refresh Devices and connect first.");
+            return;
+        }
         
-        dialog.showAndWait().ifPresent(device -> {
-            service.getChatManager().sendMessage(device.getDeviceId(), "Hello!");
+        ChoiceDialog<DeviceItem> deviceDialog = new ChoiceDialog<>();
+        deviceDialog.setTitle("New Chat");
+        deviceDialog.setHeaderText("Select a device to start a chat");
+        deviceDialog.setContentText("Device:");
+        deviceDialog.getItems().addAll(devices);
+        
+        Optional<DeviceItem> chosen = deviceDialog.showAndWait();
+        if (chosen.isEmpty()) {
+            return;
+        }
+        DeviceItem device = chosen.get();
+        
+        TextInputDialog messageDialog = new TextInputDialog();
+        messageDialog.setTitle("Message " + device.getDeviceName());
+        messageDialog.setHeaderText("Send a message to " + device.getDeviceName());
+        messageDialog.setContentText("Message:");
+        
+        messageDialog.showAndWait().ifPresent(text -> {
+            if (text.isBlank()) {
+                return;
+            }
+            boolean sent = service.getChatManager().sendMessage(device.getDeviceId(), text.trim());
+            if (sent) {
+                upsertChatItem(device.getDeviceName(), text.trim());
+            } else {
+                showAlert(Alert.AlertType.WARNING, "Not Connected",
+                    "Not connected to " + device.getDeviceName()
+                        + ". Select it in the Devices tab and click Connect first.");
+            }
         });
     }
     
@@ -371,8 +428,16 @@ public class MainWindow {
     
     private void connectToSelectedDevice() {
         DeviceItem item = deviceListView.getSelectionModel().getSelectedItem();
-        if (item != null) {
-            service.connectToDevice(item.getDeviceId());
+        if (item == null) {
+            showAlert(Alert.AlertType.INFORMATION, "No Device Selected",
+                "Select a device to connect to.");
+            return;
+        }
+        if (service.connectToDevice(item.getDeviceId())) {
+            statusLabel.setText("Status: Connecting to " + item.getDeviceName() + "...");
+        } else {
+            showAlert(Alert.AlertType.ERROR, "Connection Failed",
+                "Could not reach " + item.getDeviceName() + ". Check that it is online.");
         }
     }
     
@@ -407,6 +472,7 @@ public class MainWindow {
         DeviceItem(DeviceInfo info) { this.info = info; }
         
         String getDeviceId() { return info.deviceId(); }
+        String getDeviceName() { return info.deviceName(); }
         String getDisplayName() { return info.deviceName() + " (" + info.ipAddress() + ":" + info.tcpPort() + ")"; }
         
         @Override
@@ -414,8 +480,13 @@ public class MainWindow {
     }
     
     private static class ChatItem {
-        String name;
+        final String name;
         String lastMessage;
+        
+        ChatItem(String name, String lastMessage) {
+            this.name = name;
+            this.lastMessage = lastMessage;
+        }
         
         @Override
         public String toString() { return name + ": " + lastMessage; }

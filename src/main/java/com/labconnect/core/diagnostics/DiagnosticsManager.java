@@ -107,12 +107,16 @@ public final class DiagnosticsManager implements AutoCloseable {
     public List<ConnectionStatus> getConnectionStatuses() {
         return connectionManager.getAllConnections().stream()
                 .map(conn -> {
-                    ConnectionMetrics metrics = connectionMetrics.get(conn.getRemoteDeviceId());
+                    // Connections are not yet bound to a deviceId until their
+                    // HELLO arrives; fall back to the socket address.
+                    String deviceId = conn.getRemoteDeviceId();
+                    String displayId = deviceId != null ? deviceId : conn.getRemoteAddress();
+                    ConnectionMetrics metrics = deviceId != null ? connectionMetrics.get(deviceId) : null;
                     return new ConnectionStatus(
-                            conn.getRemoteDeviceId(),
+                            displayId,
                             conn.getRemoteAddress(),
                             conn.isConnected() ? "CONNECTED" : "DISCONNECTED",
-                            conn.getRemoteDeviceId().equals(localDeviceId) ? "LOCAL" : "REMOTE",
+                            deviceId != null && deviceId.equals(localDeviceId) ? "LOCAL" : "REMOTE",
                             metrics != null ? metrics.bytesSent : 0,
                             metrics != null ? metrics.bytesReceived : 0,
                             metrics != null ? metrics.lastActivity : null,
@@ -200,7 +204,10 @@ public final class DiagnosticsManager implements AutoCloseable {
 
     private void collectMetrics() {
         connectionManager.getAllConnections().forEach(conn -> {
-            if (conn.isConnected()) {
+            // remoteDeviceId is null until HELLO arrives; ConcurrentHashMap
+            // rejects null keys, and an NPE here would cancel this task
+            // permanently.
+            if (conn.isConnected() && conn.getRemoteDeviceId() != null) {
                 ConnectionMetrics metrics = connectionMetrics.computeIfAbsent(
                         conn.getRemoteDeviceId(), k -> new ConnectionMetrics(conn.getRemoteDeviceId())
                 );

@@ -26,4 +26,5 @@ module com.labconnect.core {
     opens com.labconnect.core.config to com.fasterxml.jackson.databind;
     opens com.labconnect.core.discovery to com.fasterxml.jackson.databind;
     opens com.labconnect.core.security to com.fasterxml.jackson.databind;
+    opens com.labconnect.core.messaging to com.fasterxml.jackson.databind;
 }

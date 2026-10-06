@@ -17,6 +17,9 @@ import java.util.function.Consumer;
 
 public final class ConnectionManager implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);
+    /** Parses HELLO payloads to bind incoming connections to a peer's deviceId. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper HELLO_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private final int port;
     private final ExecutorService workerPool;
@@ -111,8 +114,26 @@ public final class ConnectionManager implements AutoCloseable {
 
     public Optional<Connection> getConnection(String deviceId) {
         return connections.values().stream()
-                .filter(c -> c.getRemoteDeviceId().equals(deviceId))
+                .filter(c -> deviceId.equals(c.getRemoteDeviceId()))
                 .findFirst();
+    }
+
+    /**
+     * Connection registered for an outbound {@link #connect(String, int)} to
+     * the given address, if any. Lets callers avoid opening a second TCP
+     * connection to a peer that is already being (or has been) connected to.
+     */
+    public Optional<Connection> getConnectionByAddress(String host, int port) {
+        return Optional.ofNullable(connections.get(host + ":" + port));
+    }
+
+    /** The actual bound TCP port; resolves a port-0 bind to the OS-assigned port. */
+    public int getLocalPort() {
+        try {
+            return ((InetSocketAddress) serverChannel.getLocalAddress()).getPort();
+        } catch (IOException e) {
+            return port;
+        }
     }
 
     public Collection<Connection> getAllConnections() {
@@ -159,13 +180,18 @@ public final class ConnectionManager implements AutoCloseable {
     private final AtomicLong heartbeatSequence = new AtomicLong(0);
 
     private byte[] buildHelloPayload(String deviceId, String deviceName, String publicKey, Set<String> capabilities) {
+        // Capabilities must be quoted, otherwise the payload is not valid JSON
+        // and the peer cannot parse the deviceId out of it.
+        String caps = capabilities.stream()
+                .map(c -> "\"" + escape(c) + "\"")
+                .collect(java.util.stream.Collectors.joining(","));
         return ("{"
                 + "\"protocolVersion\":\"1.0\","
                 + "\"deviceId\":\"" + escape(deviceId) + "\","
                 + "\"deviceName\":\"" + escape(deviceName) + "\","
                 + "\"deviceType\":\"DESKTOP\","
                 + "\"publicKey\":\"" + escape(publicKey) + "\","
-                + "\"capabilities\":" + capabilities.toString().replace(" ", "") + ","
+                + "\"capabilities\":[" + caps + "],"
                 + "\"supportedCompression\":[\"zstd\",\"none\"]"
                 + "}").getBytes();
     }
@@ -352,9 +378,31 @@ public final class ConnectionManager implements AutoCloseable {
             // Send ACK
             connection.sendAck(frame.getMessageIdUUID(), "OK");
         } else if (frame.type() == MessageType.HELLO.value()) {
+            bindRemoteDeviceId(connection, frame);
             onFrameReceived.accept(frame);
         } else {
             onFrameReceived.accept(frame);
+        }
+    }
+
+    /**
+     * Maps this connection to the peer's advertised deviceId so that
+     * {@link #getConnection(String)} can resolve it. Without this binding the
+     * connection is only reachable by socket address and every outbound send
+     * that looks up a connection by deviceId fails.
+     */
+    private void bindRemoteDeviceId(Connection connection, FrameCodec.Frame frame) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = HELLO_MAPPER.readTree(frame.payload());
+            com.fasterxml.jackson.databind.JsonNode deviceId = node.get("deviceId");
+            if (deviceId != null && deviceId.isTextual() && !deviceId.asText().isBlank()) {
+                connection.setRemoteDeviceId(deviceId.asText());
+                log.debug("Bound connection {} to device {}", connection.getRemoteAddress(), deviceId.asText());
+            } else {
+                log.warn("HELLO from {} carries no deviceId", connection.getRemoteAddress());
+            }
+        } catch (Exception e) {
+            log.warn("Malformed HELLO from {}: {}", connection.getRemoteAddress(), e.getMessage());
         }
     }
 

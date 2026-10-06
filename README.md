@@ -4,12 +4,13 @@ GitGub version
 =======
 # LabConnect
 
-LabConnect is a decentralized LAN discovery and transport layer for peer-to-peer communication. It is a desktop (Java/JavaFX) project that discovers other LabConnect instances on the same local network via UDP multicast, and exchanges framed messages over a non-blocking TCP transport. The application layer for chat and file transfer is incomplete; this repository is shared as an engineering snapshot.
+LabConnect is a decentralized LAN discovery and transport layer for peer-to-peer communication. It is a desktop (Java/JavaFX) project that discovers other LabConnect instances on the same local network via UDP multicast, and exchanges framed messages over a non-blocking TCP transport. LAN chat now works end-to-end (connect, send, receive, delivery receipts); file transfer, TLS/pairing, and the Android client are still incomplete. This repository is shared as an engineering snapshot.
 
 ## Status (truthful)
 
-- Discovery and TCP transport: implemented and verified between two live processes. 85 automated tests pass (including a two-process frame-delivery test).
-- Chat, file transfer, TLS/mTLS, and pairing: stubbed (methods exist but have empty bodies). The Connect/New Chat/Send File actions in the UI do not deliver real behaviour.
+- Discovery and TCP transport: implemented and verified between two live processes.
+- Chat: implemented and verified end-to-end over real sockets — Connect opens a connection with a HELLO identity exchange, New Chat sends a real message, the peer receives it and a delivery receipt returns. 88 automated tests pass, including `ChatEndToEndTest` which asserts actual payload arrival between two full service instances.
+- File transfer, TLS/mTLS, and pairing: still stubbed (methods exist but have empty bodies). The Send File action in the UI does not deliver real behaviour yet.
 - Build: `mvn clean package` succeeds on Linux (and will build for Windows on Windows). The shaded JAR bundles platform natives for the OS it was built on, so do not copy a JAR between OSes — build on the target OS instead.
 
 For a precise inventory of what works and what doesn't, see `STATUS_REPORT.txt`. For a detailed engineering log, see `REVIEW_SUMMARY.txt`. 
