@@ -10,6 +10,8 @@ import com.labconnect.core.networking.Connection;
 import com.labconnect.core.networking.ConnectionManager;
 import com.labconnect.core.protocol.FrameCodec;
 import com.labconnect.core.protocol.MessageType;
+import com.labconnect.core.security.IdentityStore;
+import com.labconnect.core.security.KeyPairGenerator;
 import com.labconnect.core.security.PairingManager;
 import com.labconnect.core.security.TrustStore;
 import com.labconnect.core.transfer.TransferManager;
@@ -17,7 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.UUID;
+import java.nio.file.Path;
 import java.util.function.Consumer;
 
 /**
@@ -37,14 +39,32 @@ public class DesktopService {
     private final DiagnosticsManager diagnosticsManager;
     private final String localDeviceId;
     private final DeviceInfo localDeviceInfo;
+    private final KeyPairGenerator.KeyPair identity;
 
     private volatile Consumer<TextMessage> onMessageReceived = m -> {};
     private volatile Consumer<TextMessage> onMessageDelivered = m -> {};
     private volatile Runnable onConnectionChange = () -> {};
+    private volatile Consumer<DeviceInfo> onDeviceListChanged = d -> {};
 
+    /** Uses the default identity file ({@code ./keystore.dat}) in the working directory. */
     public DesktopService(AppConfig config) throws IOException {
+        this(config, IdentityStore.defaultPath());
+    }
+
+    /**
+     * @param identityFile where this device's Ed25519 identity is loaded from
+     *                     (or generated to on first run). Distinct instances
+     *                     must use distinct files.
+     */
+    public DesktopService(AppConfig config, Path identityFile) throws IOException {
         this.config = config;
-        this.localDeviceId = "DEVICE-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Real device identity (B1): derive both the deviceId and the
+        // advertised public key from one persisted Ed25519 key pair, so this
+        // device is uniquely identifiable to peers and stays so across
+        // restarts. A random UUID per launch would break future TOFU pairing.
+        this.identity = IdentityStore.loadOrCreate(identityFile);
+        this.localDeviceId = KeyPairGenerator.deriveDeviceId(identity.publicKeyBase64());
 
         // Initialize core managers. The callbacks below are the only path by
         // which inbound frames reach the application, so routing must be
@@ -72,10 +92,13 @@ public class DesktopService {
             deviceType,
             "127.0.0.1",
             config.getNetwork().getTcpPort(),
-            "local-public-key"
+            identity.publicKeyBase64()
         );
 
         this.discoveryManager = new DiscoveryManager(config, localDeviceInfo);
+        // B2: push registry changes (added/updated/expired) out to listeners
+        // so the device list updates live instead of only on manual refresh.
+        this.discoveryManager.addCallback("desktop-service", device -> onDeviceListChanged.accept(device));
         this.chatManager = new ChatManager(
             connectionManager,
             localDeviceId,
@@ -121,6 +144,8 @@ public class DesktopService {
     public DiagnosticsManager getDiagnosticsManager() { return diagnosticsManager; }
     public String getLocalDeviceId() { return localDeviceId; }
     public DeviceInfo getLocalDeviceInfo() { return localDeviceInfo; }
+    /** This device's persisted Ed25519 identity (needed by TLS when it lands). */
+    public KeyPairGenerator.KeyPair getIdentity() { return identity; }
 
     public void discoverDevices() {
         discoveryManager.getAllDevices(); // Triggers discovery
@@ -139,6 +164,15 @@ public class DesktopService {
     /** Registers a handler fired whenever connections appear or disappear. */
     public void setOnConnectionChange(Runnable handler) {
         this.onConnectionChange = handler != null ? handler : () -> {};
+    }
+
+    /**
+     * Registers a handler fired whenever the discovery registry changes:
+     * a device appeared, was updated, or timed out and was removed. Fired
+     * from networking threads.
+     */
+    public void setOnDeviceListChanged(Consumer<DeviceInfo> handler) {
+        this.onDeviceListChanged = handler != null ? handler : d -> {};
     }
 
     /**

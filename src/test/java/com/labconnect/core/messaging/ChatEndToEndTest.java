@@ -7,8 +7,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -33,6 +35,10 @@ class ChatEndToEndTest {
     private DesktopService alice;
     private DesktopService bob;
 
+    /** Distinct identity files per instance - sharing one would mean sharing an identity. */
+    @TempDir
+    Path identityDir;
+
     private static AppConfig config(String name) {
         AppConfig config = new AppConfig();
         config.getNetwork().setTcpPort(0);                    // ephemeral port
@@ -44,8 +50,8 @@ class ChatEndToEndTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        alice = new DesktopService(config("Alice"));
-        bob = new DesktopService(config("Bob"));
+        alice = new DesktopService(config("Alice"), identityDir.resolve("alice.dat"));
+        bob = new DesktopService(config("Bob"), identityDir.resolve("bob.dat"));
     }
 
     @AfterEach

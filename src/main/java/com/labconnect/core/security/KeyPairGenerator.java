@@ -28,15 +28,24 @@ public final class KeyPairGenerator {
         );
     }
 
+    /**
+     * Stable device identity derived from the public key: {@code DEVICE-}
+     * followed by the first 8 bytes of the SHA-256 fingerprint as hex. The
+     * same key always yields the same id, so a persisted identity keeps its
+     * deviceId across restarts (which TOFU pairing depends on).
+     */
     public static String deriveDeviceId(String publicKeyBase64) {
-        // Device ID = first 16 chars of SHA-256(publicKey)
-        // Using Base64-decoded public key
-        byte[] pubKeyBytes = Base64.decode(publicKeyBase64);
-        // For simplicity, use first 8 bytes of public key as hex
-        // In production, use SHA-256
+        byte[] fingerprint;
+        try {
+            fingerprint = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(Base64.decode(publicKeyBase64));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // SHA-256 is mandated by the JDK; reaching here is impossible.
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
         StringBuilder sb = new StringBuilder("DEVICE-");
-        for (int i = 0; i < Math.min(8, pubKeyBytes.length); i++) {
-            sb.append(String.format("%02X", pubKeyBytes[i]));
+        for (int i = 0; i < 8; i++) {
+            sb.append(String.format("%02X", fingerprint[i]));
         }
         return sb.toString();
     }

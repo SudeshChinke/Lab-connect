@@ -48,3 +48,5 @@ Thumbs.db
 *.jks
 *.keystore
 keystore.properties
+# Per-device Ed25519 identity (generated on first run, like config.yaml)
+keystore.dat

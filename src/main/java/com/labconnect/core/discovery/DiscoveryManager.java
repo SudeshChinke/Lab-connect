@@ -115,6 +115,11 @@ public final class DiscoveryManager implements AutoCloseable {
         registry.addOrUpdate(DiscoveredDevice.fromDeviceInfo(info, java.time.Instant.now()));
     }
 
+    /** Removes a peer from the registry, firing the device-removed callbacks. */
+    public void removeDevice(String deviceId) {
+        registry.remove(deviceId);
+    }
+
     @Override
     public void close() {
         started = false;

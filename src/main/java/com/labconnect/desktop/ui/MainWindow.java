@@ -263,6 +263,9 @@ public class MainWindow {
             Platform.runLater(() -> upsertChatItem(displayNameOf(msg.senderId()), msg.content())));
         service.setOnMessageDelivered(msg -> Platform.runLater(() -> chatListView.refresh()));
         service.setOnConnectionChange(() -> Platform.runLater(this::updateConnectionCount));
+        // B2: the device list updates itself whenever discovery finds,
+        // updates, or loses a device - no manual refresh needed.
+        service.setOnDeviceListChanged(device -> Platform.runLater(this::updateDeviceList));
     }
     
     /** Resolves a deviceId to a friendly name via discovery, falling back to the id. */
@@ -303,16 +306,33 @@ public class MainWindow {
     private void refreshDevices() {
         statusLabel.setText("Status: Refreshing devices...");
         service.discoverDevices();
+        Platform.runLater(this::updateDeviceList);
+    }
+    
+    /**
+     * Rebuilds the device list from the registry, preserving the current
+     * selection by deviceId. Discovery announcements arrive every few
+     * seconds, so rebuilding without this would yank a selection out from
+     * under the user mid-click.
+     */
+    private void updateDeviceList() {
+        DeviceItem selected = deviceListView.getSelectionModel().getSelectedItem();
+        String selectedId = selected != null ? selected.getDeviceId() : null;
         
-        // Update device list
-        Platform.runLater(() -> {
-            deviceListView.getItems().setAll(
-                service.getDiscoveryManager().getAllDevices().stream()
-                    .map(DeviceItem::new)
-                    .toList()
-            );
-            statusLabel.setText("Status: Ready - " + deviceListView.getItems().size() + " devices");
-        });
+        deviceListView.getItems().setAll(
+            service.getDiscoveryManager().getAllDevices().stream()
+                .map(DeviceItem::new)
+                .toList()
+        );
+        if (selectedId != null) {
+            for (int i = 0; i < deviceListView.getItems().size(); i++) {
+                if (deviceListView.getItems().get(i).getDeviceId().equals(selectedId)) {
+                    deviceListView.getSelectionModel().select(i);
+                    break;
+                }
+            }
+        }
+        statusLabel.setText("Status: Ready - " + deviceListView.getItems().size() + " devices");
     }
     
     private void refreshDiagnostics(TextArea area) {
