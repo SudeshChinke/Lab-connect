@@ -14,6 +14,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 public final class ConnectionManager implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);
@@ -30,6 +31,7 @@ public final class ConnectionManager implements AutoCloseable {
     private final Consumer<Connection> onConnectionEstablished;
     private final Consumer<Connection> onConnectionClosed;
     private final Consumer<FrameCodec.Frame> onFrameReceived;
+    private volatile BiConsumer<Connection, FrameCodec.Frame> onFrameReceivedWithConnection = (c, f) -> {};
     private final ScheduledExecutorService heartbeatScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "heartbeat-sender");
         t.setDaemon(true);
@@ -68,6 +70,11 @@ public final class ConnectionManager implements AutoCloseable {
         serverChannel.bind(new InetSocketAddress(port));
         serverChannel.register(selector, SelectionKey.OP_ACCEPT);
         log.info("ConnectionManager listening on port {}", port);
+    }
+
+    /** Registers a frame handler that also receives the identified peer connection. */
+    public void setOnFrameReceivedWithConnection(BiConsumer<Connection, FrameCodec.Frame> handler) {
+        this.onFrameReceivedWithConnection = handler != null ? handler : (c, f) -> {};
     }
 
     public void start() {
@@ -380,8 +387,10 @@ public final class ConnectionManager implements AutoCloseable {
         } else if (frame.type() == MessageType.HELLO.value()) {
             bindRemoteDeviceId(connection, frame);
             onFrameReceived.accept(frame);
+            onFrameReceivedWithConnection.accept(connection, frame);
         } else {
             onFrameReceived.accept(frame);
+            onFrameReceivedWithConnection.accept(connection, frame);
         }
     }
 

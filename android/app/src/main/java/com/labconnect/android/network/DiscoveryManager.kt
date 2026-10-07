@@ -8,8 +8,6 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.util.Log
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.serialization.json.Json
 import java.net.*
 import java.nio.ByteBuffer
@@ -24,13 +22,12 @@ class DiscoveryManager(
     private val localPublicKey: String
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val discoveredDevices = mutableMapOf<String, DiscoveredDevice>()
-    private val listeners = mutableListOf<(List<DiscoveredDevice>) -> Unit>()
+    private val discoveredDevices = java.util.concurrent.ConcurrentHashMap<String, DiscoveredDevice>()
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<(List<DiscoveredDevice>) -> Unit>()
     private var multicastSocket: MulticastSocket? = null
     private var broadcastSocket: DatagramSocket? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val isRunning = AtomicBoolean(false)
-    private val deviceUpdates = Channel<List<DiscoveredDevice>>(Channel.UNLIMITED)
     private val json = Json { ignoreUnknownKeys = true }
     private var currentNetwork: Network? = null
     
@@ -49,11 +46,8 @@ class DiscoveryManager(
     fun start() {
         if (isRunning.getAndSet(true)) return
         
-        scope.launch {
-            setupNetworkMonitoring()
-            startDiscovery()
-            processDeviceUpdates()
-        }
+        setupNetworkMonitoring()
+        startDiscovery()
     }
     
     fun stop() {
@@ -87,7 +81,6 @@ class DiscoveryManager(
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         
         networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -158,7 +151,7 @@ class DiscoveryManager(
         broadcastSocket = null
     }
     
-    private fun announceLoop() {
+    private suspend fun announceLoop() {
         val announcement = DeviceAnnounce(
             deviceId = localDeviceId,
             deviceName = localDeviceName,
@@ -251,7 +244,7 @@ class DiscoveryManager(
         }
     }
     
-    private fun cleanupLoop() {
+    private suspend fun cleanupLoop() {
         while (isRunning.get()) {
             delay(10000)
             val now = System.currentTimeMillis()

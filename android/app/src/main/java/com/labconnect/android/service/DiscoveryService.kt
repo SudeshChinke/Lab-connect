@@ -9,7 +9,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import com.labconnect.android.R
 import com.labconnect.android.network.DiscoveryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +63,7 @@ class DiscoveryService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("LabConnect Discovery")
             .setContentText(getString(R.string.discovery_service_running))
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(android.R.drawable.sym_def_app_icon)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()

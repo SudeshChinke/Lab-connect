@@ -282,6 +282,18 @@ public class MainWindow {
         // B2: the device list updates itself whenever discovery finds,
         // updates, or loses a device - no manual refresh needed.
         service.setOnDeviceListChanged(device -> Platform.runLater(this::updateDeviceList));
+        service.getPairingManager().setOnIncomingPairingRequest(request -> Platform.runLater(() -> {
+            String fingerprint = fingerprint(request.requesterPublicKey());
+            Alert prompt = new Alert(Alert.AlertType.CONFIRMATION,
+                "Trust " + request.requesterDeviceName() + " (" + request.requesterDeviceId() + ")?\n\n"
+                    + "Verify this fingerprint with the person before accepting:\n" + fingerprint,
+                ButtonType.YES, ButtonType.NO);
+            prompt.setTitle("Pairing request");
+            prompt.setHeaderText("Verify peer identity");
+            boolean accepted = prompt.showAndWait().filter(ButtonType.YES::equals).isPresent();
+            if (accepted) service.getPairingManager().acceptPairing(request.sessionId());
+            else service.getPairingManager().rejectPairing(request.sessionId());
+        }));
     }
     
     /** Resolves a deviceId to a friendly name via discovery, falling back to the id. */
@@ -581,13 +593,33 @@ public class MainWindow {
     
     private void pairWithSelectedDevice() {
         DeviceItem item = deviceListView.getSelectionModel().getSelectedItem();
-        if (item != null) {
-            service.getPairingManager().initiatePairing(
-                item.getDeviceId(),
-                item.getDisplayName(),
-                "remote-public-key", // TODO: Get actual public key from device info
-                response -> System.out.println("Pairing response: " + response)
-            );
+        if (item == null) return;
+        if (service.getConnectionManager().getConnection(item.getDeviceId())
+                .filter(com.labconnect.core.networking.Connection::isConnected).isEmpty()) {
+            showAlert(Alert.AlertType.INFORMATION, "Connect first", "Connect to this device, then start pairing.");
+            return;
+        }
+        Alert verify = new Alert(Alert.AlertType.CONFIRMATION,
+            "Compare this fingerprint with the peer through a separate trusted channel before continuing:\n\n"
+                + fingerprint(item.info.publicKey()), ButtonType.OK, ButtonType.CANCEL);
+        verify.setTitle("Verify peer fingerprint");
+        verify.setHeaderText("Pair with " + item.info.deviceName() + "?");
+        if (verify.showAndWait().filter(ButtonType.OK::equals).isEmpty()) return;
+        service.getPairingManager().initiatePairing(item.getDeviceId(), item.info.deviceName(),
+            item.info.publicKey(), result -> Platform.runLater(() -> showAlert(
+                result.success() ? Alert.AlertType.INFORMATION : Alert.AlertType.ERROR,
+                result.success() ? "Paired" : "Pairing failed", result.message())));
+    }
+
+    private static String fingerprint(String base64PublicKey) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(java.util.Base64.getDecoder().decode(base64PublicKey));
+            StringBuilder result = new StringBuilder();
+            for (byte b : digest) result.append(String.format("%02X", b));
+            return result.toString().replaceAll("(.{4})", "$1 ").trim();
+        } catch (Exception e) {
+            return "Invalid public key";
         }
     }
     

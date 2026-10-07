@@ -1,6 +1,5 @@
 package com.labconnect.core.security;
 
-import org.bouncycastle.util.encoders.Base64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -8,6 +7,11 @@ import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.function.BiConsumer;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.labconnect.core.protocol.FrameCodec;
+import com.labconnect.core.protocol.MessageType;
 
 public final class PairingManager {
     private static final Logger log = LoggerFactory.getLogger(PairingManager.class);
@@ -15,17 +19,30 @@ public final class PairingManager {
     private final TrustStore trustStore;
     private final String localDeviceId;
     private final String localDeviceName;
+    private final String localPublicKey;
+    private final BiConsumer<String, FrameCodec.Frame> sendFrame;
+    private final ScheduledExecutorService timeoutExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "pairing-timeouts"); t.setDaemon(true); return t;
+    });
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final Map<String, Consumer<PairingResult>> callbacks = new ConcurrentHashMap<>();
     
     private final Map<String, PairingSession> pendingSessions = new ConcurrentHashMap<>();
-    private final ExecutorService timeoutExecutor = Executors.newSingleThreadScheduledExecutor();
     
-    private Consumer<PairingRequest> onIncomingPairingRequest;
-    private Consumer<PairingResult> onPairingResult;
+    private volatile Consumer<PairingRequest> onIncomingPairingRequest;
+    private volatile Consumer<PairingResult> onPairingResult;
 
     public PairingManager(TrustStore trustStore, String localDeviceId, String localDeviceName) {
+        this(trustStore, localDeviceId, localDeviceName, "", (deviceId, frame) -> {});
+    }
+
+    public PairingManager(TrustStore trustStore, String localDeviceId, String localDeviceName,
+                          String localPublicKey, BiConsumer<String, FrameCodec.Frame> sendFrame) {
         this.trustStore = trustStore;
         this.localDeviceId = localDeviceId;
         this.localDeviceName = localDeviceName;
+        this.localPublicKey = localPublicKey;
+        this.sendFrame = sendFrame;
     }
 
     public void setOnIncomingPairingRequest(Consumer<PairingRequest> handler) {
@@ -37,30 +54,66 @@ public final class PairingManager {
     }
 
     public void initiatePairing(String targetDeviceId, String targetDeviceName, String targetPublicKey, Consumer<PairingResult> callback) {
+        if (targetPublicKey == null || targetPublicKey.isBlank()
+                || !targetDeviceId.equals(KeyPairGenerator.deriveDeviceId(targetPublicKey))) {
+            if (callback != null) callback.accept(new PairingResult("", targetDeviceId, false,
+                    "Peer identity does not match its advertised public key"));
+            return;
+        }
         String sessionId = UUID.randomUUID().toString();
         PairingSession session = new PairingSession(
                 sessionId, targetDeviceId, targetDeviceName, targetPublicKey, 
                 PairingSession.State.PENDING, System.currentTimeMillis()
         );
         pendingSessions.put(sessionId, session);
+        if (callback != null) callbacks.put(sessionId, callback);
 
         log.info("Initiated pairing with {} ({})", targetDeviceName, targetDeviceId);
 
         // Set timeout
-        Executors.newSingleThreadScheduledExecutor().schedule(() -> {
+        send(targetDeviceId, MessageType.PAIR_REQUEST, Map.of(
+                "sessionId", sessionId, "deviceId", localDeviceId,
+                "deviceName", localDeviceName, "publicKey", localPublicKey));
+        timeoutExecutor.schedule(() -> {
             PairingSession s = pendingSessions.remove(sessionId);
             if (s != null && s.state() == PairingSession.State.PENDING) {
                 log.warn("Pairing timeout for {}", targetDeviceId);
-                callback.accept(new PairingResult(sessionId, targetDeviceId, false, "Timeout"));
+                complete(sessionId, new PairingResult(sessionId, targetDeviceId, false, "Timeout"));
             }
         }, 30, TimeUnit.SECONDS);
+    }
+
+    /** Routes a pairing protocol frame from an already identified TCP peer. */
+    public void handleFrame(String senderDeviceId, FrameCodec.Frame frame) {
+        try {
+            JsonNode body = mapper.readTree(frame.payload());
+            String sessionId = requiredText(body, "sessionId");
+            MessageType type = MessageType.fromValue(frame.type());
+            switch (type) {
+                case PAIR_REQUEST -> {
+                    String claimedId = requiredText(body, "deviceId");
+                    if (!senderDeviceId.equals(claimedId)) throw new IllegalArgumentException("Pairing identity mismatch");
+                    String publicKey = requiredText(body, "publicKey");
+                    if (!senderDeviceId.equals(KeyPairGenerator.deriveDeviceId(publicKey)))
+                        throw new IllegalArgumentException("Public key does not match peer identity");
+                    handleIncomingPairingRequest(sessionId, senderDeviceId,
+                            requiredText(body, "deviceName"), publicKey);
+                }
+                case PAIR_ACCEPT -> handleIncomingAccept(sessionId, senderDeviceId);
+                case PAIR_REJECT -> handleIncomingReject(sessionId, senderDeviceId);
+                default -> log.warn("Unexpected pairing frame {}", type);
+            }
+        } catch (Exception e) {
+            log.warn("Ignoring malformed pairing frame: {}", e.getMessage());
+        }
     }
 
     public void handleIncomingPairingRequest(String sessionId, String requesterDeviceId, 
                                              String requesterDeviceName, String requesterPublicKey) {
         if (trustStore.isTrusted(requesterDeviceId)) {
-            // Already trusted, auto-accept
-            acceptPairing(sessionId);
+            // The peer's identity is already established; acknowledge without
+            // replacing the stored key from an unauthenticated request.
+            send(requesterDeviceId, MessageType.PAIR_ACCEPT, Map.of("sessionId", sessionId));
             return;
         }
 
@@ -95,6 +148,7 @@ public final class PairingManager {
             );
 
             log.info("Accepted pairing with {} ({})", session.targetDeviceName(), session.targetDeviceId());
+            send(session.targetDeviceId(), MessageType.PAIR_ACCEPT, Map.of("sessionId", sessionId));
             
             if (onPairingResult != null) {
                 onPairingResult.accept(new PairingResult(
@@ -112,6 +166,7 @@ public final class PairingManager {
         if (session == null) return;
 
         log.info("Rejected pairing with {} ({})", session.targetDeviceName(), session.targetDeviceId());
+        send(session.targetDeviceId(), MessageType.PAIR_REJECT, Map.of("sessionId", sessionId));
         
         callbackError(sessionId, session.targetDeviceId(), "Rejected by user");
     }
@@ -140,6 +195,7 @@ public final class PairingManager {
             );
 
             log.info("Peer accepted our pairing request: {}", session.targetDeviceId());
+            complete(sessionId, new PairingResult(sessionId, session.targetDeviceId(), true, "Accepted by peer"));
             
             if (onPairingResult != null) {
                 onPairingResult.accept(new PairingResult(
@@ -151,6 +207,15 @@ public final class PairingManager {
         }
     }
 
+    private void handleIncomingAccept(String sessionId, String senderDeviceId) {
+        PairingSession session = pendingSessions.get(sessionId);
+        if (session == null || !session.targetDeviceId().equals(senderDeviceId)) {
+            log.warn("Ignoring pairing acceptance from unexpected peer {}", senderDeviceId);
+            return;
+        }
+        handleIncomingAccept(sessionId);
+    }
+
     public void handleIncomingReject(String sessionId) {
         PairingSession session = pendingSessions.remove(sessionId);
         if (session == null) return;
@@ -159,10 +224,39 @@ public final class PairingManager {
         callbackError(sessionId, session.targetDeviceId(), "Rejected by peer");
     }
 
-    private void callbackError(String sessionId, String deviceId, String error) {
-        if (onPairingResult != null) {
-            onPairingResult.accept(new PairingResult(sessionId, deviceId, false, error));
+    private void handleIncomingReject(String sessionId, String senderDeviceId) {
+        PairingSession session = pendingSessions.get(sessionId);
+        if (session == null || !session.targetDeviceId().equals(senderDeviceId)) {
+            log.warn("Ignoring pairing rejection from unexpected peer {}", senderDeviceId);
+            return;
         }
+        handleIncomingReject(sessionId);
+    }
+
+    private void callbackError(String sessionId, String deviceId, String error) {
+        complete(sessionId, new PairingResult(sessionId, deviceId, false, error));
+    }
+
+    private void complete(String sessionId, PairingResult result) {
+        Consumer<PairingResult> callback = callbacks.remove(sessionId);
+        if (callback != null) callback.accept(result);
+        if (onPairingResult != null) onPairingResult.accept(result);
+    }
+
+    private void send(String deviceId, MessageType type, Object payload) {
+        try {
+            sendFrame.accept(deviceId, FrameCodec.Frame.create(type.value(), (byte) 0, UUID.randomUUID(),
+                    mapper.writeValueAsBytes(payload)));
+        } catch (Exception e) {
+            log.warn("Could not send pairing frame to {}: {}", deviceId, e.getMessage());
+        }
+    }
+
+    private static String requiredText(JsonNode node, String name) {
+        JsonNode value = node.get(name);
+        if (value == null || !value.isTextual() || value.asText().isBlank())
+            throw new IllegalArgumentException("Missing " + name);
+        return value.asText();
     }
 
     public void shutdown() {

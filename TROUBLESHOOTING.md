@@ -1,5 +1,9 @@
 # LabConnect Troubleshooting Guide
 
+Current limitation: the desktop app's TCP traffic is plaintext and pairing is
+not required to connect. TLS handshake troubleshooting below is not applicable
+to the current transport. Android chat and file transfer are not implemented.
+
 ## Quick Diagnosis
 
 Run diagnostics from the app: **Menu → Diagnostics → Generate Report**
@@ -36,8 +40,7 @@ peer connections are all recorded there.
 |-------|-------|-----|
 | Port 5000 blocked | `telnet <ip> 5000` | Allow TCP 5000 in firewall |
 | Wrong port | Config mismatch | Verify both use port 5000 (or same custom port) |
-| Not paired | `requirePairing=true` | Pair devices first, or set `requirePairing: false` |
-| TLS handshake fail | Logs show "Handshake failed" | Delete `keystore.dat` and `truststore.dat`, re-pair |
+| App cannot connect securely | Plain TCP is currently used | Do not send sensitive data; TLS integration is still required |
 
 ### Connection Drops Frequently
 
@@ -52,19 +55,19 @@ peer connections are all recorded there.
 
 ## Pairing Issues
 
-### Pairing Request Not Received
+### Pairing Request Not Received (desktop only)
 
 | Cause | Fix |
 |-------|-----|
 | Device not discovered | Fix discovery first (above) |
-| Pairing UI not showing | Restart app, check notification permissions (Android) |
-| Auto-reject | Check `requirePairing` config, ensure both apps running |
+| Pairing UI not showing | Connect to the desktop peer first; both desktop apps must be running |
+| Request is rejected | The other desktop user declined or has no request handler |
 
 ### Pairing Fails / "Verification Failed"
 
 | Cause | Fix |
 |-------|-----|
-| Stale truststore | Delete `truststore.dat` on both devices, re-pair |
+| Stale truststore | Back up, then remove `truststore.properties` on both devices and re-pair |
 | Key mismatch | Delete `keystore.dat` on one device (regenerates key), re-pair |
 | Fingerprint mismatch | Verify out-of-band, someone may be MITM |
 

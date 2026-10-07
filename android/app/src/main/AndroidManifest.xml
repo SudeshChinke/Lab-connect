@@ -14,8 +14,9 @@
     
     <!-- Android 13+ nearby devices permission for Wi-Fi discovery -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
-        android:maxSdkVersion="32"
-        tools:ignore="ManifestPermission" />
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="32" />
     
     <!-- Local network access (Android 12+) -->
     <uses-permission android:name="android.permission.LOCAL_NETWORK" />
@@ -25,9 +26,9 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/sym_def_app_icon"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@android:drawable/sym_def_app_icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.LabConnect"
         tools:targetApi="31">

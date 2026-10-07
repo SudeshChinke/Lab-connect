@@ -1,84 +1,47 @@
-<<<<<<< ours
-# Lab-connect
-GitGub version
-=======
 # LabConnect
 
-LabConnect is a decentralized LAN discovery and transport layer for peer-to-peer communication. It is a desktop (Java/JavaFX) project that discovers other LabConnect instances on the same local network via UDP multicast, and exchanges framed messages over a non-blocking TCP transport. LAN chat now works end-to-end (connect, send, receive, delivery receipts); file transfer, TLS/pairing, and the Android client are still incomplete. This repository is shared as an engineering snapshot.
+LabConnect is a local network peer-to-peer communication prototype. The desktop Java application can discover peers, connect over TCP, exchange direct text messages, and transfer files with chunk acknowledgments and SHA-256 verification.
 
-## Status (truthful)
+## Current implementation status
 
-- Discovery and TCP transport: implemented and verified between two live processes.
-- Chat: implemented and verified end-to-end over real sockets — Connect opens a connection with a HELLO identity exchange, New Chat sends a real message, the peer receives it and a delivery receipt returns. Each device has a real persisted Ed25519 identity (`keystore.dat`, key-derived deviceId) instead of a shared placeholder key, and the device list updates live from discovery.
-- File transfer: implemented and verified end-to-end — Send File opens a file chooser, picks a target device, sends the file with SHA-256 integrity verification, chunk acknowledgments, and resume support. 97 automated tests pass, including `TransferEndToEndTest` which asserts actual file arrival with correct hash between two full service instances.
-- File transfer, TLS/mTLS, and pairing: still stubbed (methods exist but have empty bodies). The Send File action in the UI does not deliver real behaviour yet.
-- Build: `mvn clean package` succeeds on Linux (and will build for Windows on Windows). The shaded JAR bundles platform natives for the OS it was built on, so do not copy a JAR between OSes — build on the target OS instead.
+- Desktop discovery, TCP framing, direct chat, file transfer, and desktop pairing have automated coverage. `mvn test` runs the complete Java test suite, including end-to-end desktop tests over local TCP sockets.
+- The Android sources are an unfinished prototype. They do not yet implement the same complete messaging and transfer flows as desktop.
+- Desktop TLS is not connected to the TCP transport. Do not use this version for private or sensitive traffic.
+- Pairing UI exists, but pairing frames are not routed to the pairing manager. Pairing between running applications is not functional yet.
+- Group creation exists in the desktop chat manager, but group membership exchange and cross-device group messaging are incomplete.
 
-For a precise inventory of what works and what doesn't, see `STATUS_REPORT.txt`. For a detailed engineering log, see `REVIEW_SUMMARY.txt`. 
+Passing automated tests demonstrate behavior on one machine; they do not replace testing discovery and firewall behavior between real devices.
 
-## Quick start
+## Desktop prerequisites
 
-1. **Prerequisites**: JDK 21 or newer, Apache Maven 3.6+.
-2. **Clone and build**:
-   ```bash
-   git clone https://github.com/SudeshChinke/LabConnect.git
-   cd LabConnect
-   mvn clean package
-   ```
-3. **Run**:
-   ```bash
-   java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
-   ```
-   On first launch, if `config.yaml` is missing, the app copies `config.example.yaml` to `config.yaml` automatically. The window title shows the device name from config. The UI lists only other LabConnect instances (discovered via multicast), not arbitrary hosts.
+- JDK 21 or newer (the source targets Java 17)
+- Apache Maven 3.6 or newer
 
-## Multi-instance testing
+## Build and run desktop
 
-**Single machine (two windows)**:
+From this directory:
+
 ```bash
-# Peer A
+mvn clean package
 java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
-
-# Peer B in a separate directory
-mkdir -p /tmp/peerB
-cp config.example.yaml /tmp/peerB/config.yaml
-# edit /tmp/peerB/config.yaml to use name: peerB and tcpPort: 5001
-(cd /tmp/peerB && java -jar /path/to/LabConnect/target/labconnect-core-1.0.0-SNAPSHOT.jar)
 ```
 
-**Two machines on the same LAN**: build on each, ensure `config.yaml` has a unique `name`, run both. Allow discovery/transport through the firewall.
+The application uses `config.yaml` in its working directory and creates it from `config.example.yaml` on first start. Devices need to be on a network that permits UDP multicast and TCP connections. The default ports are UDP 50001 for discovery and TCP 5000 for peer connections.
 
-- Linux (ufw): `sudo ufw allow 5000/tcp && sudo ufw allow 50001/udp`
-- Windows (PowerShell, admin): 
-  ```powershell
-  New-NetFirewallRule -DisplayName "LabConnect UDP" -Direction Inbound -Protocol UDP -LocalPort 50001 -Action Allow
-  New-NetFirewallRule -DisplayName "LabConnect TCP" -Direction Inbound -Protocol TCP -LocalPort 5000 -Action Allow
-  ```
+## Run desktop tests
 
-Ports: UDP 50001 (multicast), TCP 5000 (peer connections). Networks that filter multicast (some guest Wi-Fi, VLANs) may prevent discovery.
+```bash
+mvn test
+```
 
-## What works / doesn't
+## Android
 
-| Feature | State |
-|---|---|
-| UDP multicast discovery | Working, verified |
-| TCP framing, heartbeats, partial-write handling | Working, verified |
-| Config (YAML) | Working |
-| JavaFX UI, device list (refresh to poll) | Working |
-| Chat (send/receive) | Stub |
-| File transfer (chunking/queueing plumbing incomplete) | Stub |
-| TLS/mTLS (encryption) | Not implemented (plaintext today) |
-| Pairing/TOFU | Stub |
-| Mobile (Android) | Not built here |
+The Android project is in `android/`. It requires Android Studio/Android SDK and a compatible Gradle installation. Android discovery, chat, and file transfers have not been validated as a complete flow.
 
-## Development notes
+## Security
 
-- Tests: `mvn test` (85 tests). The `P2PFrameDeliveryTest` exercises real socket delivery in both directions and across partial writes.
-- Config is per-machine and gitignored; `config.example.yaml` is tracked. Don't commit real `config.yaml` files.
-- The shaded JAR is platform-locked to the build OS. Cross-OS jar reuse is not supported.
-- No Git history rewrites were performed here; only the working tree was cleaned for personal/local paths.
-- This is an engineering snapshot: discovery and transport are solid, application features are incomplete. See `STATUS_REPORT.txt` for a concrete implementation plan. 
+The desktop transport currently sends protocol frames over plaintext TCP. Pairing and TLS are not active features in the running desktop app. Use only on a trusted test network, and do not transfer sensitive data.
 
 ## License
 
-MIT License. See `LICENSE` for details.
->>>>>>> theirs
+MIT. See [LICENSE](LICENSE).

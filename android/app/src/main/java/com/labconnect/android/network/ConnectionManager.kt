@@ -24,7 +24,7 @@ class ConnectionManager(
     private val json = Json { ignoreUnknownKeys = true }
     
     data class Connection(
-        val remoteDeviceId: String,
+        var remoteDeviceId: String,
         val socket: SocketChannel,
         val remoteAddress: InetSocketAddress,
         val sendChannel: Channel<Frame> = Channel(100),
@@ -133,10 +133,18 @@ class ConnectionManager(
     }
     
     private fun processBuffer(connection: Connection, buffer: ByteBuffer) {
-        while (FrameCodec.hasCompleteFrame(buffer.array())) {
-            val frame = FrameCodec.decode(buffer.array()) ?: return
-            buffer.position(buffer.position() + (FrameCodec.HEADER_SIZE + FrameCodec.MESSAGE_ID_SIZE + frame.payload.size))
-            
+        while (buffer.remaining() >= FrameCodec.HEADER_SIZE) {
+            val frameStart = buffer.position()
+            val frameLength = buffer.getInt()
+            buffer.position(frameStart)
+            if (frameLength < FrameCodec.HEADER_SIZE + FrameCodec.MESSAGE_ID_SIZE ||
+                frameLength > FrameCodec.MAX_FRAME_SIZE) {
+                throw IllegalArgumentException("Invalid frame length: $frameLength")
+            }
+            if (buffer.remaining() < frameLength) return
+            val encodedFrame = ByteArray(frameLength)
+            buffer.get(encodedFrame)
+            val frame = FrameCodec.decode(encodedFrame) ?: return
             frameHandlers[frame.type]?.invoke(connection, frame)
         }
     }
@@ -145,7 +153,8 @@ class ConnectionManager(
         for (frame in connection.sendChannel) {
             try {
                 val data = FrameCodec.encode(frame)
-                connection.socket.write(ByteBuffer.wrap(data))
+                val buffer = ByteBuffer.wrap(data)
+                while (buffer.hasRemaining()) connection.socket.write(buffer)
             } catch (e: IOException) {
                 Log.e("ConnectionManager", "Write error", e)
                 break

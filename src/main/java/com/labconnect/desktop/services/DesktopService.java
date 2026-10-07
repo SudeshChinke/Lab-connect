@@ -78,8 +78,9 @@ public class DesktopService {
             config.getNetwork().getHeartbeatInterval(),
             this::handleConnectionEstablished,
             this::handleConnectionClosed,
-            this::routeFrame
+            frame -> {}
         );
+        this.connectionManager.setOnFrameReceivedWithConnection(this::routeFrame);
 
         // Convert AppConfig.DeviceType to DeviceInfo.DeviceType
         com.labconnect.core.models.DeviceInfo.DeviceType deviceType = 
@@ -121,11 +122,18 @@ public class DesktopService {
             tr -> onTransferFailed.accept(tr)
         );
         
-        TrustStore trustStore = new TrustStore();
+        Path trustStorePath = identityFile.equals(IdentityStore.defaultPath())
+            ? Path.of("truststore.properties")
+            : identityFile.resolveSibling("truststore.properties");
+        TrustStore trustStore = new TrustStore(trustStorePath);
         this.pairingManager = new PairingManager(
             trustStore,
             localDeviceId,
-            config.getDevice().getName()
+            config.getDevice().getName(),
+            identity.publicKeyBase64(),
+            (deviceId, frame) -> connectionManager.getConnection(deviceId)
+                .filter(Connection::isConnected)
+                .ifPresent(connection -> connectionManager.sendFrame(connection, frame))
         );
         
         this.diagnosticsManager = new DiagnosticsManager(
@@ -266,7 +274,7 @@ public class DesktopService {
      * manager that owns that part of the protocol. Frames not routed here are
      * dropped silently, so every new wire feature needs a case below.
      */
-    private void routeFrame(FrameCodec.Frame frame) {
+    private void routeFrame(Connection sender, FrameCodec.Frame frame) {
         MessageType type = MessageType.fromValue(frame.type());
         if (type == null) {
             log.warn("Dropping frame with unknown type 0x{}", Integer.toHexString(frame.type() & 0xFF));
@@ -281,8 +289,14 @@ public class DesktopService {
             case FILE_REQUEST, FILE_ACCEPT, FILE_REJECT, FILE_CHUNK, FILE_CHUNK_ACK,
                  FILE_COMPLETE, FILE_VERIFIED, FILE_CANCEL, FILE_RESUME, FILE_PAUSE ->
                 transferManager.handleFrame(frame);
-            case PAIR_REQUEST, PAIR_ACCEPT, PAIR_REJECT, KEY_ROTATE ->
-                log.debug("Pairing frame {} received but pairing over the wire is not implemented yet", type);
+            case PAIR_REQUEST, PAIR_ACCEPT, PAIR_REJECT -> {
+                if (sender.getRemoteDeviceId() == null) {
+                    log.warn("Ignoring pairing frame without an identified peer");
+                } else {
+                    pairingManager.handleFrame(sender.getRemoteDeviceId(), frame);
+                }
+            }
+            case KEY_ROTATE -> log.warn("Ignoring unsupported key rotation frame");
             case GOODBYE -> log.debug("GOODBYE received");
             default -> log.debug("No handler registered for frame type {}", type);
         }

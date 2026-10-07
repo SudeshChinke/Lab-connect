@@ -23,6 +23,11 @@ mvn -version
 - **Min SDK**: API 24 (Android 7.0)
 - **Target SDK**: API 34 (Android 14)
 
+The Android tree is an unfinished prototype. Discovery UI is present, but there
+is no complete Android chat or file-transfer implementation. No Gradle wrapper
+or Android SDK is included in this repository; Android build/device validation
+has not been performed for the current repair copy.
+
 ---
 
 ## Building from Source

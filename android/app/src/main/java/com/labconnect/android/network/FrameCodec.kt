@@ -1,6 +1,7 @@
 package com.labconnect.android.network
 
 import kotlinx.serialization.json.Json
+import kotlin.reflect.KClass
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -76,7 +77,7 @@ object FrameCodec {
         
         fun parseJsonPayload(frame: Frame, clazz: KClass<*>): Any? {
             return try {
-                json.decodeFromString(clazz, String(frame.payload, Charsets.UTF_8))
+                com.google.gson.Gson().fromJson(String(frame.payload, Charsets.UTF_8), clazz.java)
             } catch (e: Exception) {
                 null
             }

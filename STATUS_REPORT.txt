@@ -1,6 +1,12 @@
 LabConnect - Engineering Status Report
-Generated: 2026-10-07 (supersedes the 2026-10-04 report)
-Commit: (current HEAD) + implementation (clean tree)
+This file contains a historical report and is not current implementation truth.
+Current snapshot (2026-10-07, Downloads repair copy): desktop `mvn clean
+package` succeeds; 100 Java tests pass, including desktop chat/file transfer and
+new pairing tests. Pairing is now wired and trust keys persist to
+`truststore.properties`, but it does not secure or gate TCP connections. TLS
+is still not integrated. Android remains a discovery prototype and has not
+been built or device-tested in this environment. See README.md and SECURITY.md
+for current behavior. The detailed notes below describe an earlier checkout.
 
 ================================================================================
 1. BUILD / TEST STATE  (verified 2026-10-07)
