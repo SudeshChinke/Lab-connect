@@ -42,4 +42,8 @@ public class TrustStore implements Serializable {
     public Optional<TrustedPeer> getTrustedPeer(String deviceId) {
         return Optional.ofNullable(trustedPeers.get(deviceId));
     }
+
+    public Map<String, TrustedPeer> getTrustedPeers() {
+        return new ConcurrentHashMap<>(trustedPeers);
+    }
 }
