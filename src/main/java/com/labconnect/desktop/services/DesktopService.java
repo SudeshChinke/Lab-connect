@@ -14,6 +14,7 @@ import com.labconnect.core.security.IdentityStore;
 import com.labconnect.core.security.KeyPairGenerator;
 import com.labconnect.core.security.PairingManager;
 import com.labconnect.core.security.TrustStore;
+import com.labconnect.core.transfer.Transfer;
 import com.labconnect.core.transfer.TransferManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,9 @@ public class DesktopService {
     private volatile Consumer<TextMessage> onMessageDelivered = m -> {};
     private volatile Runnable onConnectionChange = () -> {};
     private volatile Consumer<DeviceInfo> onDeviceListChanged = d -> {};
+    private volatile Consumer<Transfer> onTransferProgress = t -> {};
+    private volatile Consumer<Transfer> onTransferCompleted = t -> {};
+    private volatile Consumer<Transfer> onTransferFailed = t -> {};
 
     /** Uses the default identity file ({@code ./keystore.dat}) in the working directory. */
     public DesktopService(AppConfig config) throws IOException {
@@ -112,9 +116,9 @@ public class DesktopService {
             localDeviceId,
             config,
             java.nio.file.Paths.get("downloads"),
-            tr -> {}, // onTransferProgress
-            tr -> {},  // onTransferCompleted
-            tr -> {}   // onTransferFailed
+            tr -> onTransferProgress.accept(tr),
+            tr -> onTransferCompleted.accept(tr),
+            tr -> onTransferFailed.accept(tr)
         );
         
         TrustStore trustStore = new TrustStore();
@@ -173,6 +177,21 @@ public class DesktopService {
      */
     public void setOnDeviceListChanged(Consumer<DeviceInfo> handler) {
         this.onDeviceListChanged = handler != null ? handler : d -> {};
+    }
+
+    /** Callback when a file transfer makes progress. */
+    public void setOnTransferProgress(Consumer<Transfer> handler) {
+        this.onTransferProgress = handler != null ? handler : t -> {};
+    }
+
+    /** Callback when a file transfer completes successfully. */
+    public void setOnTransferCompleted(Consumer<Transfer> handler) {
+        this.onTransferCompleted = handler != null ? handler : t -> {};
+    }
+
+    /** Callback when a file transfer fails. */
+    public void setOnTransferFailed(Consumer<Transfer> handler) {
+        this.onTransferFailed = handler != null ? handler : t -> {};
     }
 
     /**

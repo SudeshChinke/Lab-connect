@@ -8,6 +8,7 @@ import com.labconnect.core.messaging.ChatManager;
 import com.labconnect.core.messaging.TextMessage;
 import com.labconnect.core.models.DeviceInfo;
 import com.labconnect.core.networking.ConnectionManager;
+import com.labconnect.core.transfer.Transfer;
 import com.labconnect.core.transfer.TransferManager;
 import com.labconnect.desktop.services.DesktopService;
 import javafx.application.Platform;
@@ -23,7 +24,10 @@ import javafx.scene.layout.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.stage.Stage;
+import javafx.stage.FileChooser;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -213,12 +217,24 @@ public class MainWindow {
         
         HBox buttonBox = new HBox(10);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        Button sendFileBtn = new Button("Send File");
+        sendFileBtn.setOnAction(e -> showFileSender());
         Button cancelBtn = new Button("Cancel Selected");
         cancelBtn.setOnAction(e -> cancelSelectedTransfers(transferTable));
-        buttonBox.getChildren().add(cancelBtn);
+        buttonBox.getChildren().addAll(sendFileBtn, cancelBtn);
         
         VBox wrapper = new VBox(10);
         wrapper.getChildren().addAll(title, transferTable, buttonBox);
+        
+        // Wire up transfer manager callbacks to populate the table
+        refreshTransferTable(transferTable);
+        service.getTransferManager().getActiveTransfers().forEach(t -> 
+            Platform.runLater(() -> addTransferRow(transferTable, t))
+        );
+        service.setOnTransferProgress(t -> Platform.runLater(() -> updateTransferRow(transferTable, t)));
+        service.setOnTransferCompleted(t -> Platform.runLater(() -> updateTransferRow(transferTable, t)));
+        service.setOnTransferFailed(t -> Platform.runLater(() -> updateTransferRow(transferTable, t)));
+        
         return wrapper;
     }
     
@@ -409,8 +425,110 @@ public class MainWindow {
     }
     
     private void showFileSender() {
-        // TODO: Implement file chooser and sender
-        showAlert(Alert.AlertType.INFORMATION, "Coming Soon", "File sending will be implemented in Phase 8");
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select File(s) to Send");
+        
+        fileChooser.getExtensionFilters().addAll(
+            new FileChooser.ExtensionFilter("All Files", "*.*"),
+            new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp"),
+            new FileChooser.ExtensionFilter("Documents", "*.pdf", "*.doc", "*.docx", "*.txt", "*.md"),
+            new FileChooser.ExtensionFilter("Archives", "*.zip", "*.rar", "*.7z", "*.tar", "*.gz"),
+            new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.mkv", "*.avi", "*.mov")
+        );
+        
+        List<File> files = fileChooser.showOpenMultipleDialog(this.stage);
+        if (files == null || files.isEmpty()) {
+            return;
+        }
+        
+        // Get connected devices
+        List<DeviceItem> devices = service.getDiscoveryManager().getAllDevices().stream()
+            .filter(d -> d.status() == DeviceInfo.DeviceStatus.ONLINE)
+            .map(DeviceItem::new)
+            .toList();
+        
+        if (devices.isEmpty()) {
+            showAlert(Alert.AlertType.WARNING, "No Devices", "No online devices available to send files to.");
+            return;
+        }
+        
+        for (File file : files) {
+            showSendFileDialog(file.toPath(), devices);
+        }
+    }
+    
+    private void showSendFileDialog(java.nio.file.Path filePath, List<DeviceItem> devices) {
+        ChoiceDialog<DeviceItem> dialog = new ChoiceDialog<>();
+        dialog.setTitle("Send File");
+        dialog.setHeaderText("Send " + filePath.getFileName() + " to:");
+        dialog.setContentText("Device:");
+        dialog.getItems().addAll(devices);
+        
+        dialog.showAndWait().ifPresent(device -> {
+            try {
+                service.getTransferManager().sendFile(device.getDeviceId(), filePath);
+                statusLabel.setText("Sending " + filePath.getFileName() + " to " + device.getDeviceName());
+            } catch (IOException e) {
+                showAlert(Alert.AlertType.ERROR, "Send Failed", "Failed to send file: " + e.getMessage());
+            }
+        });
+    }
+    
+    private void refreshTransferTable(TableView<TransferRow> table) {
+        table.getItems().clear();
+        service.getTransferManager().getActiveTransfers().forEach(t -> 
+            addTransferRow(table, t)
+        );
+    }
+    
+    private void addTransferRow(TableView<TransferRow> table, Transfer t) {
+        String fileName = t.getMetadata().fileName();
+        String progress = String.format("%.1f%%", t.getProgress() * 100);
+        String speed = formatSpeed(t.getSpeedBytesPerSec());
+        String eta = t.getEtaMillis() > 0 ? formatEta(t.getEtaMillis()) : "--";
+        String status = t.getState().name();
+        
+        TransferRow row = new TransferRow(fileName, progress, speed, eta, status);
+        row.transfer = t;
+        table.getItems().add(row);
+    }
+    
+    private void updateTransferRow(TableView<TransferRow> table, Transfer t) {
+        for (TransferRow row : table.getItems()) {
+            if (row.transfer != null && row.transfer.getMetadata().transferId().equals(t.getMetadata().transferId())) {
+                row.progress.set(String.format("%.1f%%", t.getProgress() * 100));
+                row.speed.set(formatSpeed(t.getSpeedBytesPerSec()));
+                row.eta.set(t.getEtaMillis() > 0 ? formatEta(t.getEtaMillis()) : "--");
+                row.status.set(t.getState().name());
+                table.refresh();
+                break;
+            }
+        }
+    }
+    
+    private String formatSpeed(double bytesPerSec) {
+        if (bytesPerSec < 1024) return String.format("%.1f B/s", bytesPerSec);
+        if (bytesPerSec < 1024 * 1024) return String.format("%.1f KB/s", bytesPerSec / 1024);
+        return String.format("%.1f MB/s", bytesPerSec / (1024 * 1024));
+    }
+    
+    private String formatEta(long millis) {
+        long seconds = millis / 1000;
+        if (seconds < 60) return seconds + "s";
+        long minutes = seconds / 60;
+        if (minutes < 60) return minutes + "m";
+        return (minutes / 60) + "h";
+    }
+    
+    private void cancelSelectedTransfers(TableView<?> table) {
+        if (table instanceof TableView<?>) {
+            @SuppressWarnings("unchecked")
+            TableView<TransferRow> transferTable = (TableView<TransferRow>) table;
+            TransferRow selected = transferTable.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.transfer != null) {
+                service.getTransferManager().cancelTransfer(selected.transfer.getMetadata().transferId());
+            }
+        }
     }
     
     private void showSettingsDialog() {
@@ -473,10 +591,6 @@ public class MainWindow {
         }
     }
     
-    private void cancelSelectedTransfers(TableView<?> table) {
-        // TODO: Implement
-    }
-    
     private void showAlert(Alert.AlertType type, String title, String msg) {
         Alert alert = new Alert(type);
         alert.setTitle(title);
@@ -518,6 +632,7 @@ public class MainWindow {
         private final StringProperty speed = new SimpleStringProperty();
         private final StringProperty eta = new SimpleStringProperty();
         private final StringProperty status = new SimpleStringProperty();
+        Transfer transfer; // Reference to actual transfer for cancellation
         
         TransferRow(String fileName, String progress, String speed, String eta, String status) {
             this.fileName.set(fileName);

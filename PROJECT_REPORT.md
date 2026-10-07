@@ -8,18 +8,20 @@ chat, and resumable file transfer across Java/JavaFX desktop and Kotlin/Android
 mobile platforms. It operates entirely offline with no central server, cloud
 dependency, or internet requirement.
 
-**Status (verified, not aspirational)**: 95 automated tests pass. UDP multicast
+**Status (verified, not aspirational)**: 97 automated tests pass. UDP multicast
 discovery and the TCP transport have been validated between two separate
 processes on one host — peers discover each other and exchange framed messages
 in both directions. LAN chat is implemented end-to-end and covered by an
 integration test that asserts real payload arrival between two service
 instances over live sockets. Every device also has a real persisted Ed25519
 identity (generated on first run, key-derived deviceId, stable across
-restarts) instead of a shared placeholder key.
+restarts) instead of a shared placeholder key. **File transfer is now
+implemented end-to-end** with SHA-256 integrity verification, chunk
+acknowledgments, and resume support, covered by TransferEndToEndTest.
 
-**However, parts of the application layer are not finished.** File transfer and
-TLS (mutual auth / pairing) are declared in these classes but their methods have
-empty bodies, so those features do not work yet:
+**However, parts of the application layer are not finished.** TLS (mutual auth /
+pairing) is declared in these classes but has empty bodies, so those features
+do not work yet:
 
 | Area | State |
 |------|-------|
@@ -30,7 +32,7 @@ empty bodies, so those features do not work yet:
 | Device identity (`IdentityStore`) | Implemented, verified (Ed25519, persisted, key-derived deviceId) |
 | Chat (`ChatManager`) | Implemented, verified end-to-end (send, receive, acks) |
 | Connect button (`DesktopService.connectToDevice`) | Implemented, verified end-to-end |
-| File transfer (`TransferManager`) | **Stub — sends zero bytes** |
+| File transfer (`TransferManager`) | Implemented, verified end-to-end (SHA-256, chunks, acks, resume) |
 | TLS 1.3 mTLS (`TlsContextManager`) | **Stub — transport is plaintext** |
 | Pairing / TOFU (`KeyPairManager`, `PairingManager`) | **Stub** |
 | Android client | Not built or verified here |
@@ -161,14 +163,22 @@ Until TLS is implemented, any traffic on the LAN is readable by a third party.
 | ConfigTest | 7 | ✅ Pass |
 | IdentityStoreTest | 4 | ✅ Pass |
 | DesktopServiceTest | 3 | ✅ Pass |
+| TransferEndToEndTest | 2 | ✅ Pass |
 
-**All 95 tests passing** — zero failures, zero errors.
+**All 97 tests passing** — zero failures, zero errors.
 
 `ChatEndToEndTest` is the suite that proves the chat feature works: two full
 DesktopService instances connect over a real TCP socket, exchange HELLO
 identities, and a typed message arrives at the peer's ChatManager callback with
 its payload intact, followed by a delivery receipt returning to the sender and
 a reply travelling back over the same connection.
+
+`TransferEndToEndTest` is the suite that proves file transfer works: two full
+DesktopService instances connect over a real TCP socket, one sends a file via
+the TransferManager, the peer receives it chunk by chunk with acknowledgments,
+verifies the SHA-256 hash matches, and the transfer completes with
+FILE_VERIFIED confirmation. Two tests cover single file and multiple file
+transfers.
 
 `P2PFrameDeliveryTest` is the suite that proves frames actually reach a peer over
 a real socket (single frame, default 64KB file chunk, 512KB payload forcing

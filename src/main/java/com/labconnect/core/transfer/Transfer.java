@@ -39,6 +39,8 @@ public final class Transfer {
     private volatile boolean paused = false;
     private volatile boolean cancelled = false;
     
+    private volatile String finalHash = null;
+    
     // Resume support
     private volatile long resumeOffset = 0;
     private volatile long lastCheckpointOffset = 0;
@@ -184,7 +186,12 @@ public final class Transfer {
     }
 
     public String computeFinalHash() {
-        return bytesToHex(digest.digest());
+        if (finalHash != null) {
+            return finalHash;
+        }
+        String hash = bytesToHex(digest.digest());
+        this.finalHash = hash;
+        return hash;
     }
 
     public boolean verifyHash() {
@@ -218,6 +225,10 @@ public final class Transfer {
     public void markChunkAcked(long chunkIndex) {
         ackedChunks.add(chunkIndex);
         sentChunks.remove(chunkIndex); // Free memory
+    }
+
+    public long getNextChunkToSend() {
+        return nextChunkToSend.get();
     }
 
     public Set<Long> getMissingChunks() {

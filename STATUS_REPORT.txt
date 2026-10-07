@@ -1,13 +1,13 @@
 LabConnect - Engineering Status Report
 Generated: 2026-10-07 (supersedes the 2026-10-04 report)
-Commit: 735f964 + doc updates (clean tree)
+Commit: (current HEAD) + implementation (clean tree)
 
 ================================================================================
 1. BUILD / TEST STATE  (verified 2026-10-07)
 ================================================================================
 
   mvn clean package      -> BUILD SUCCESS
-  Tests: 95/95 passing, zero failures
+  Tests: 97/97 passing, zero failures
   No uncommitted changes, no stray processes
 
   PASSING test suites:
@@ -16,7 +16,7 @@ Commit: 735f964 + doc updates (clean tree)
     TextMessageTest 5, MessageDeduplicatorTest 4, GroupTest 5,
     TransferTest 8, ResumableTransferTest 4, HistoryManagerTest 10,
     ErrorHandlerTest 13, DiagnosticsManagerTest 9, ConfigTest 7,
-    IdentityStoreTest 4, DesktopServiceTest 3
+    IdentityStoreTest 4, DesktopServiceTest 3, TransferEndToEndTest 2
 
   What is genuinely verified working:
     - UDP multicast discovery, bidirectional
@@ -28,6 +28,10 @@ Commit: 735f964 + doc updates (clean tree)
       a typed message arrives at the peer's ChatManager callback with its
       payload intact, a MESSAGE_ACK delivery receipt returns to the sender,
       and a reply travels back over the same connection
+    - FILE TRANSFER END-TO-END (TransferEndToEndTest, new): two full
+      DesktopService instances - a file sent from one arrives at the peer
+      with correct SHA-256 hash, chunks are acknowledged, FILE_COMPLETE
+      and FILE_VERIFIED frames complete the transfer
     - PERSISTED DEVICE IDENTITY (IdentityStoreTest + DesktopServiceTest,
       new): a real Ed25519 key pair is generated on first run, reloaded on
       restart with the same deviceId, and each instance gets a distinct
@@ -37,14 +41,14 @@ Commit: 735f964 + doc updates (clean tree)
     - Config YAML load/save round trip
     - JavaFX GUI launches, device list populates from live discovery
 
-  TESTING CAVEAT (still applies to remaining work): most of the 95 tests are
+  TESTING CAVEAT (still applies to remaining work): most of the 97 tests are
   unit tests on data classes, priority queues, checksum engine and the config
-  mapper. Chat now has a true end-to-end test, but file transfer, TLS and
+  mapper. Chat and file transfer now have true end-to-end tests, but TLS and
   pairing do NOT. Any new feature MUST have an integration test asserting real
   payload arrival, not just isConnected().
 
 ================================================================================
-2. BLOCKING ERRORS  (E1-E4 RESOLVED 2026-10-07, E5-E7 still open)
+2. BLOCKING ERRORS  (E1-E5 RESOLVED 2026-10-07, E6-E7 still open)
 ================================================================================
 
 [E1] DesktopService never routes frames -> RESOLVED
@@ -83,16 +87,22 @@ Commit: 735f964 + doc updates (clean tree)
   onMessageRead. Duplicates are re-acknowledged but not re-delivered.
   Covered by ChatEndToEndTest (payload arrival + ack round trip + reverse).
 
-[E5] TransferManager: all four wire methods are empty -> transfers send zero bytes
-  File: core/transfer/TransferManager.java
-      private void sendFileRequest(...)   { // Send FILE_REQUEST frame }
-      private void sendFileAccept(...)    { // Send FILE_ACCEPT frame }
-      private void sendFileChunk(...)     { // Send FILE_CHUNK frame }
-      private void sendFileComplete(...)  { // Send FILE_COMPLETE frame }
-  Also empty: onTaskStart, onTaskComplete, onTaskProgress, onTaskFail,
-  handleFileRequest, handleFileAccept, handleFileResume, reportProgress,
-  getTransfer, getActiveTransfers, getQueueSize, getRunningCount.
-  sendFile() already computes SHA-256, builds TransferMetadata and queues the
+[E5] TransferManager: all four wire methods are empty -> RESOLVED
+  2026-10-07: Implemented sendFileRequest, sendFileAccept, sendFileChunk,
+  sendFileComplete, sendFileReject, sendChunkAck, sendFileCancel,
+  sendFileVerified, sendFileResume. Frame handlers handleFileRequest,
+  handleFileAccept, handleFileReject, handleFileChunk, handleChunkAck,
+  handleFileComplete, handleFileVerified, handleFileCancel, handleFileResume.
+  Flow: sender sends FILE_REQUEST → receiver sends FILE_ACCEPT with resume
+  offset → sender sends FILE_CHUNK frames → receiver writes chunks and sends
+  FILE_CHUNK_ACK → when all chunks acked, sender sends FILE_COMPLETE with
+  final hash → receiver verifies hash, sends FILE_VERIFIED → sender completes.
+  Chunk flow controlled by ACKs (sender waits for all ACKs before FILE_COMPLETE).
+  SHA-256 integrity verified end-to-end. Resumable transfer support via
+  FILE_RESUME (receiver requests resume with known hash at offset).
+  Covered by TransferEndToEndTest (2 tests: single file, multiple files).
+  UI: MainWindow.showFileSender() with FileChooser and target device dropdown;
+  Transfers tab shows progress table with cancel button.
   task correctly - it just never emits a frame.
   Fix: implement the FILE_* frame handlers using types 0x40 REQUEST,
   0x41 ACCEPT, 0x43 CHUNK, 0x45 COMPLETE, 0x48 RESUME. Chunk size comes from
@@ -276,19 +286,19 @@ Still to do:
   DONE    Step 3  E3  sendTextMessage                 (2026-10-07)
   DONE    Step 4  E4  handleFrame                     (2026-10-07)
   DONE    Step 5  B1+B2  real device key, live device list (2026-10-07)
-  Step 6  E5  TransferManager wire methods    (file transfer; transport proven)
-  Step 7  B4+B6  file chooser + target dropdown
+  DONE    Step 6  E5  TransferManager wire methods    (2026-10-07)
+  DONE    Step 7  B4+B6  file chooser + target dropdown (2026-10-07)
   Step 8  E6  TLS - biggest job, do last      (needs BouncyCastle certs +
                                                SSLEngine in ConnectionManager)
   Step 9  E7  pairing, after E6
   Step 10 I1  cross-platform builds
 
-  Steps 1-5 are complete: this is now a working LAN chat app with a real
-  persisted device identity, proven by ChatEndToEndTest, IdentityStoreTest
-  and DesktopServiceTest over live sockets. Next up is step 6 (file
-  transfer; transport is already proven), then step 7. Step 8 is what
-  makes it safe. Note: E6/E7 work should reuse DesktopService.getIdentity()
-  as the key source instead of TlsContextManager generating a second one.
+  Steps 1-7 are complete: this is now a working LAN chat + file transfer
+  app with real persisted device identity, proven by ChatEndToEndTest,
+  TransferEndToEndTest, IdentityStoreTest and DesktopServiceTest over
+  live sockets. Next up is step 8 (TLS/mTLS). Note: E6/E7 work should
+  reuse DesktopService.getIdentity() as the key source instead of
+  TlsContextManager generating a second one.
 
 ================================================================================
 7. THINGS THAT WILL TRIP UP A NEW CONTRIBUTOR

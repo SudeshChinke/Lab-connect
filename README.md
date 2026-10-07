@@ -9,7 +9,8 @@ LabConnect is a decentralized LAN discovery and transport layer for peer-to-peer
 ## Status (truthful)
 
 - Discovery and TCP transport: implemented and verified between two live processes.
-- Chat: implemented and verified end-to-end over real sockets — Connect opens a connection with a HELLO identity exchange, New Chat sends a real message, the peer receives it and a delivery receipt returns. Each device has a real persisted Ed25519 identity (`keystore.dat`, key-derived deviceId) instead of a shared placeholder key, and the device list updates live from discovery. 95 automated tests pass, including `ChatEndToEndTest` which asserts actual payload arrival between two full service instances.
+- Chat: implemented and verified end-to-end over real sockets — Connect opens a connection with a HELLO identity exchange, New Chat sends a real message, the peer receives it and a delivery receipt returns. Each device has a real persisted Ed25519 identity (`keystore.dat`, key-derived deviceId) instead of a shared placeholder key, and the device list updates live from discovery.
+- File transfer: implemented and verified end-to-end — Send File opens a file chooser, picks a target device, sends the file with SHA-256 integrity verification, chunk acknowledgments, and resume support. 97 automated tests pass, including `TransferEndToEndTest` which asserts actual file arrival with correct hash between two full service instances.
 - File transfer, TLS/mTLS, and pairing: still stubbed (methods exist but have empty bodies). The Send File action in the UI does not deliver real behaviour yet.
 - Build: `mvn clean package` succeeds on Linux (and will build for Windows on Windows). The shaded JAR bundles platform natives for the OS it was built on, so do not copy a JAR between OSes — build on the target OS instead.
 
