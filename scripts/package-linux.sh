@@ -7,6 +7,9 @@ cd "$ROOT_DIR"
 mvn --batch-mode -DskipTests clean package
 mkdir -p dist/linux
 rm -f dist/linux/*
+APP_INPUT="$(mktemp -d)"
+trap 'rm -rf "$APP_INPUT"' EXIT
+cp target/labconnect-core-1.0.0-SNAPSHOT.jar "$APP_INPUT/"
 
 jpackage \
   --type deb \
@@ -14,7 +17,7 @@ jpackage \
   --app-version 1.0.0 \
   --vendor LabConnect \
   --description "Local network messaging and file sharing" \
-  --input target \
+  --input "$APP_INPUT" \
   --main-jar labconnect-core-1.0.0-SNAPSHOT.jar \
   --main-class com.labconnect.desktop.Launcher \
   --dest dist/linux \

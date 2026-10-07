@@ -1,270 +1,128 @@
-# LabConnect Setup Guide
+# Install LabConnect
 
-## Install the application
+LabConnect has separate builds for Windows, Linux Mint, and Android. Download
+the artifact for your device from the latest successful **Build LabConnect** run
+on the [repository's Actions page](https://github.com/SudeshChinke/Lab-connect/actions).
+Download the artifact ZIP and extract the installer or APK inside it. GitHub
+may ask you to sign in before downloading workflow artifacts.
 
-The packaged apps include LabConnect's runtime and application libraries. A JDK,
-Maven, Gradle, and Android Studio are only needed when building from source.
+## Linux Mint
 
-- **Windows:** install the `LabConnect-1.0.0.msi` workflow artifact. It adds a
-  Start Menu entry and desktop shortcut and installs for the current user.
-- **Linux Mint:** download the `labconnect_1.0.0_amd64.deb` workflow artifact
-  and install it with `sudo apt install ./labconnect_1.0.0_amd64.deb`.
-- **Android:** install the `app-debug.apk` workflow artifact. Android may ask
-  you to allow installs from the app used to open the APK.
+The Linux package is for 64-bit Intel/AMD PCs (`amd64`).
 
-The desktop package includes a Java runtime and JavaFX. Linux package manager
-will install any standard operating-system libraries the desktop needs. The
-Android APK includes its Android-side libraries. Installed desktop settings,
-identity, trust list, logs, and received files live in the user's application
-data directory.
+1. Download and extract `labconnect-desktop-ubuntu-latest` from GitHub Actions.
+2. In a terminal, go to the folder containing `labconnect_1.0.0_amd64.deb`.
+3. Install it:
 
-## Prerequisites
+   ```bash
+   sudo apt install ./labconnect_1.0.0_amd64.deb
+   ```
 
-### Desktop (Windows/Linux/macOS)
-- **Java 17+** (Eclipse Temurin/OpenJDK recommended; builds fine on JDK 21)
-- **Maven 3.8+** (for building from source)
-- **JavaFX 21** (included via Maven, platform-specific natives resolved automatically)
+   `apt` installs any required Linux system libraries. LabConnect includes its
+   Java runtime.
+4. Open **LabConnect** from the applications menu.
 
-#### Linux install
-```bash
-# Debian/Ubuntu/Mint
-sudo apt update
-sudo apt install openjdk-17-jdk maven
+To remove it later: `sudo apt remove labconnect`.
 
-# verify
-java -version
-mvn -version
-```
+## Windows
 
-### Android source build
-- **Android Studio** or Android SDK 34
-- **JDK 17+**
-- Gradle 8.6 downloads automatically through the checked-in wrapper
-- **Min SDK**: API 24 (Android 7.0)
+The Windows package is an x64 per-user MSI installer.
 
----
+1. Download and extract `labconnect-desktop-windows-latest` from GitHub Actions.
+2. Double-click `LabConnect-1.0.0.msi` and follow the installer prompts.
+3. Start **LabConnect** from the Start menu. The installer includes its Java
+   runtime; a separate Java installation is not needed.
 
-## Building from Source
+If Windows Firewall blocks discovery or file transfers, run PowerShell as
+Administrator and add private-network rules:
 
-### Desktop Application
-```bash
-# Clone repository
-git clone <repo-url>
-cd LabConnect
-
-# Build with Maven
-mvn clean package
-
-# Run
-java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
-
-# Or run with Maven (development)
-mvn javafx:run
-```
-
-### Android Application
-```bash
-# Open in Android Studio
-# File → Open → LabConnect/android
-
-# Build
-./gradlew assembleDebug
-
-# Install on device
-./gradlew installDebug
-```
-
----
-
-## Network Configuration
-
-### Required Ports
-| Protocol | Port | Direction | Purpose |
-|----------|------|-----------|---------|
-| TCP | 5000 | Inbound/Outbound | Main data connection |
-| UDP | 50001 | Inbound/Outbound | Discovery multicast |
-| UDP | 50001 | Outbound | Discovery broadcast fallback |
-
-### Windows Firewall
 ```powershell
-# Allow LabConnect through firewall
-New-NetFirewallRule -DisplayName "LabConnect TCP" -Direction Inbound -LocalPort 5000 -Protocol TCP -Action Allow
-New-NetFirewallRule -DisplayName "LabConnect UDP Discovery" -Direction Inbound -LocalPort 50001 -Protocol UDP -Action Allow
+New-NetFirewallRule -DisplayName "LabConnect TCP" -Direction Inbound -Profile Private -LocalPort 5000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "LabConnect Discovery" -Direction Inbound -Profile Private -LocalPort 50001 -Protocol UDP -Action Allow
 ```
 
-### Linux Firewall (ufw)
-```bash
-sudo ufw allow 5000/tcp
-sudo ufw allow 50001/udp
-```
+## Android
 
-### Router Settings (TP-Link)
-1. Enable **Multicast** / **IGMP Snooping** in router settings
-2. Disable **AP Isolation** / **Client Isolation**
-3. Ensure devices on same subnet (192.168.x.x)
+LabConnect supports Android 7.0 (API 24) and newer.
 
----
+1. Download and extract `labconnect-android` from GitHub Actions.
+2. Copy `app-debug.apk` to the phone, then open it with the Files app.
+3. If Android asks, allow the Files app to install unknown apps, return to the
+   installer, and tap **Install**. This permission can be turned off again
+   afterward in Settings.
+4. Open LabConnect. Allow **Nearby devices** on Android 13 or later; on Android
+   7–12, allow **Location** when requested so Wi-Fi discovery can run.
+5. Keep Wi-Fi enabled and connect to the same local network as the other
+   LabConnect devices. Keep LabConnect open in the foreground while discovering
+   peers or transferring files.
 
-## Configuration
+The APK is a debug build intended for direct installation and evaluation.
 
-### Desktop Config (`config.yaml`)
-Source builds create `./config.yaml` in the current working directory. Installed
-builds create it in the user's LabConnect application data directory:
+## Connect devices
 
-```yaml
-device:
-  name: "LabConnect-User"
-  type: "DESKTOP"
-network:
-  tcpPort: 5000
-  discoveryPort: 50001
-  multicastGroup: "239.255.255.250"
-  announceIntervalSec: 5
-  heartbeatIntervalSec: 5
-  connectionTimeoutSec: 10
-transfer:
-  chunkSize: 65536
-  maxConcurrentTransfers: 4
-  resumeEnabled: true
-security:
-  requirePairing: true
-  tlsVersion: "TLSv1.3"
-logging:
-  level: "INFO"
-  fileEnabled: true
-  consoleEnabled: true
-```
+1. Install and open LabConnect on each device.
+2. Connect all devices to the same Wi-Fi or local network. Guest Wi-Fi may block
+   device-to-device traffic.
+3. Allow incoming TCP port **5000** and UDP port **50001** in the computer's
+   firewall. On Linux Mint with UFW:
 
-### Android Config
-Stored in `SharedPreferences`, editable in Settings screen.
+   ```bash
+   sudo ufw allow 5000/tcp
+   sudo ufw allow 50001/udp
+   ```
 
----
+   On Windows, allow LabConnect when Windows Firewall prompts. If discovery
+   still fails, create inbound rules for TCP 5000 and UDP 50001.
+4. Wait for the peer list to populate, tap/click **Connect**, then send a chat
+   message or file. Accept incoming file requests on the receiving device.
 
-## Running the Application
+The router must allow local peer traffic and multicast; turn off AP/client
+isolation for the Wi-Fi network if devices cannot see each other. The current
+transport is unencrypted TCP. Use only on a trusted network and do not send
+sensitive information. Physical device-to-device behavior may vary by network
+and has not been fully validated.
 
-### Desktop
-```bash
-# Development
-mvn javafx:run
+## Build from source
 
-# Production (after `mvn clean package`)
-java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
-```
+### Windows or Linux desktop
 
-The fat jar bundles Java and JavaFX application libraries, but needs a compatible
-Java runtime. The Windows MSI and Linux Mint DEB bundle their own runtime too.
-
-Edit the generated `config.yaml` to change the desktop device name or ports.
-Installed builds keep configuration in the user's LabConnect application data
-directory; source builds use their current working directory.
-
-### Android
-1. Install APK on device
-2. Grant permissions when prompted:
-   - **Location** on Android 12 and older
-   - **Nearby devices** on Android 13 and newer
-3. Launch the app. Select a discovered device and tap **Connect** to chat or send a file.
-4. Accept or decline incoming file requests. Received files are stored in the app's private received-files folder.
-
----
-
-## First Run Checklist
-
-- [ ] Install the Windows MSI, Linux Mint DEB, or Android APK
-- [ ] Port 5000 TCP allowed in firewall
-- [ ] Port 50001 UDP allowed in firewall
-- [ ] All devices on same Wi-Fi network
-- [ ] Router multicast enabled
-- [ ] AP Isolation disabled
-
----
-
-## Verification
-
-### Quick Test (Single Machine)
-
-Two instances can share one discovery port (the listener sets `SO_REUSEADDR`),
-but each needs its own `config.yaml`, so run the second peer from a separate
-directory with a different `network.tcpPort`:
+Install JDK 21 and Maven 3.8 or newer, clone the repository, and run:
 
 ```bash
 mvn clean package
-
-# Peer A - uses ./config.yaml (tcpPort 5000)
 java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
-
-# Peer B - separate directory, own config.yaml with tcpPort 5001
-mkdir -p /tmp/peerB
-sed 's/^  tcpPort: 5000/  tcpPort: 5001/' config.yaml > /tmp/peerB/config.yaml
-(cd /tmp/peerB && java -jar ~/path/to/LabConnect/target/labconnect-core-1.0.0-SNAPSHOT.jar)
 ```
 
-Both instances should discover each other, and each should list the other in
-the device panel after clicking **Refresh Devices**.
+To create a native installer, build on the target operating system:
 
-### Multi-Machine Test
-1. Run on PC1: `java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar`
-2. Run on PC2: `java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar`
-3. Both should appear in each other's device list within 10 seconds
+- Linux Mint: `bash scripts/package-linux.sh`
+- Windows PowerShell: `./scripts/package-windows.ps1` (requires WiX Toolset)
 
-Note: discovery uses UDP multicast on 239.255.255.250:50001. Networks that
-filter multicast (some guest Wi-Fi, some VLANs) will block discovery.
-
----
-
-## Logs & Diagnostics
-
-### Log Files
-- Desktop: `logs/labconnect.log` in the user's LabConnect application data directory for installed builds
-- Android: `logcat | grep LabConnect`
-
-### Diagnostic Report
-There is no command-line diagnostics mode. Use the UI:
-**Diagnostics → Generate Report**, then copy the text out of the dialog.
-A machine-readable version of the same information is in the log file:
-```bash
-grep -i "discovery\|connection\|error\|warn" logs/labconnect.log
-```
-
----
-
-## Common Issues
-
-| Problem | Solution |
-|---------|----------|
-| "JavaFX not found" | Use `mvn javafx:run` or ensure modular JDK |
-| Devices not found | Check firewall, router multicast, same subnet |
-| Pairing fails | Delete `truststore.dat`, restart both apps |
-| Transfer fails | Check disk space, file permissions, chunk size |
-| Android crashes | Check logcat, grant all permissions |
-
----
-
-## Building Distributables
-
-### Desktop (jpackage)
-```bash
-# Windows
-jpackage --input target --main-jar labconnect-core-1.0.0-SNAPSHOT.jar --name LabConnect --type exe
-
-# Linux
-jpackage --input target --main-jar labconnect-core-1.0.0-SNAPSHOT.jar --name LabConnect --type deb
-
-# macOS
-jpackage --input target --main-jar labconnect-core-1.0.0-SNAPSHOT.jar --name LabConnect --type dmg
-```
+The desktop package contains the Java runtime. Linux may still fetch standard
+OS libraries through `apt` during installation.
 
 ### Android
+
+Install Android Studio with Android SDK Platform 34 and JDK 17. Open the
+repository's `android` folder in Android Studio and allow Gradle to sync; the
+checked-in wrapper downloads Gradle 8.6 and the project dependencies. To build
+from a terminal:
+
 ```bash
-./gradlew bundleRelease  # For Play Store
-./gradlew assembleRelease  # For direct distribution
+cd android
+./gradlew assembleDebug
 ```
 
----
+On Windows, run `gradlew.bat assembleDebug` from the `android` folder instead.
 
-## Updating
-```bash
-git pull
-mvn clean package
-# Replace jar/APK
-```
+The APK is written to
+`android/app/build/outputs/apk/debug/app-debug.apk`. Android Studio can install
+it on a connected device, or use `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
+
+## Data locations
+
+Installed desktop settings, identity keys, logs, and received files are stored
+in the user's LabConnect application-data folder. Source runs use files in the
+working directory. Android stores its identity and received files in
+app-private storage. Keep `keystore.dat` private if you need to preserve a
+source-run desktop identity.

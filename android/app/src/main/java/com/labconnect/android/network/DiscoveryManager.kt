@@ -229,7 +229,7 @@ class DiscoveryManager(
             // Ignore our own announcements
             if (announcement.deviceId == localDeviceId) return
             
-            val senderIp = packet.address.hostAddress
+            val senderIp = packet.address?.hostAddress ?: return
             
             val device = DiscoveredDevice(
                 deviceId = announcement.deviceId,

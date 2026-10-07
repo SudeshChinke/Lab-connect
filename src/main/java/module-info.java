@@ -3,7 +3,6 @@ module com.labconnect.core {
     requires java.base;
     requires java.naming;
     requires javafx.controls;
-    requires javafx.fxml;
     requires org.slf4j;
     requires com.fasterxml.jackson.databind;
     requires com.fasterxml.jackson.datatype.jsr310;

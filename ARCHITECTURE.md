@@ -1,5 +1,9 @@
 # LabConnect — Architecture
 
+> Design reference only. Some sections describe intended capabilities, including
+> TLS and group messaging, that are not active in the current app. For current
+> behavior and security limits, see [README.md](README.md) and [SECURITY.md](SECURITY.md).
+
 ## 1. High-Level Architecture
 
 ```
@@ -295,8 +299,7 @@ security:
 
 ## 11. Testing Strategy
 
-- **Unit Tests**: Each core module (protocol, framing, checksum, registry)
-- **Integration Tests**: Two-process TCP/TLS, discovery round-trip
-- **Hardware Tests**: 15 scenarios in PROJECT_PLAN.md
-- **Chaos Testing**: Random disconnects, router restarts, IP changes
-- **Performance**: 1GB transfer throughput, 100MB/s LAN target
+- Desktop unit and integration tests are in `src/test`; run them with `mvn test`.
+- Android protocol unit tests are in `android/app/src/test`.
+- Real cross-device tests across Windows, Linux Mint, and Android remain to be
+  completed. TLS and group messaging are not verified app features.

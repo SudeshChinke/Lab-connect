@@ -1,48 +1,44 @@
 # LabConnect
 
-LabConnect is a local network peer-to-peer communication prototype. The desktop Java application can discover peers, connect over TCP, exchange direct text messages, and transfer files with chunk acknowledgments and SHA-256 verification.
+LabConnect is a local-network peer-to-peer app for Windows, Linux Mint, and
+Android. It discovers nearby peers and supports direct text messages and file
+transfers with SHA-256 integrity checks. Devices need to be on a network that
+allows them to communicate directly; there is no central server.
 
-## Current implementation status
+## Get the app
 
-- Desktop discovery, TCP framing, direct chat, file transfer, and desktop pairing have automated coverage. `mvn test` runs the complete Java test suite, including end-to-end desktop tests over local TCP sockets.
-- Android now has stable desktop-compatible identity, LAN discovery, TCP client/server, heartbeats, direct text messaging, and single-file transfers with an incoming-file approval prompt and SHA-256 verification. The Android app has been compiled, but the cross-device flow has not yet been exercised on physical devices.
-- Desktop TLS is not connected to the TCP transport. Do not use this version for private or sensitive traffic.
-- Desktop pairing and fingerprint confirmation are implemented, but pairing does not yet block untrusted traffic or encrypt connections.
-- Group creation exists in the desktop chat manager, but group membership exchange and cross-device group messaging are incomplete.
+Download the platform artifact from the latest successful **Build LabConnect**
+run in GitHub Actions, extract its ZIP, and follow the [device setup guide](SETUP.md).
 
-Passing automated tests demonstrate behavior on one machine; they do not replace testing discovery and firewall behavior between real devices.
+| Device | GitHub Actions artifact | Package |
+| --- | --- | --- |
+| Windows x64 | `labconnect-desktop-windows-latest` | MSI installer |
+| Linux Mint x64 | `labconnect-desktop-ubuntu-latest` | `.deb` package |
+| Android 7+ | `labconnect-android` | Debug APK |
 
-## Desktop prerequisites
+The desktop installers bundle the Java runtime. Android dependencies are
+included in the APK. Linux's package manager installs any native system
+libraries needed by the desktop UI.
 
-- JDK 21 or newer (the source targets Java 17)
-- Apache Maven 3.6 or newer
+## Current limitations
 
-## Build and run desktop
+- Desktop and Android support discovery, direct chat, and single-file transfer.
+- Group chat is not complete across devices.
+- Desktop and Android TCP traffic is unencrypted; pairing does not enforce
+  access control. Use only on a trusted test network and do not send sensitive
+  data. See [SECURITY.md](SECURITY.md).
+- Keep the Android app open in the foreground during discovery and transfers.
+- Real device-to-device behavior depends on router and firewall settings and
+  has not been fully validated on physical devices.
 
-From this directory:
+## Build
 
-```bash
-mvn clean package
-java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
-```
+- Desktop: JDK 21 and Maven; run `mvn clean package`.
+- Android: Android Studio, Android SDK Platform 34, and JDK 17; open `android`
+  or run `cd android && ./gradlew assembleDebug`.
 
-Source runs use `config.yaml` in their working directory. Installed builds keep their settings, identity, trust list, and received files in the user's application data directory. Devices need to be on a network that permits UDP multicast and TCP connections. The default ports are UDP 50001 for discovery and TCP 5000 for peer connections.
-
-Use the self-contained Windows installer, Linux Mint `.deb`, or Android APK from the workflow artifacts. The desktop installers include a Java runtime and JavaFX/application dependencies; users do not need Maven or a separate JDK. The Android APK bundles Android-side dependencies. Native desktop packages must be built on their target OS, so CI creates Windows and Linux packages separately.
-
-## Run desktop tests
-
-```bash
-mvn test
-```
-
-## Android
-
-The Android project is in `android/`. It requires Android Studio or Android SDK 34, JDK 17, and Gradle 8.6. Android supports discovery, connecting, direct text messages, and single-file transfers on the same Wi-Fi network. Received files are stored in the app's private `files/received` folder. Pairing enforcement and encrypted transport are not implemented. The GitHub Actions workflow builds a debug APK artifact.
-
-## Security
-
-The desktop transport currently sends protocol frames over plaintext TCP. Pairing and TLS are not active features in the running desktop app. Use only on a trusted test network, and do not transfer sensitive data.
+Build and per-device install instructions are in [SETUP.md](SETUP.md). Desktop
+unit and integration tests run with `mvn test`.
 
 ## License
 

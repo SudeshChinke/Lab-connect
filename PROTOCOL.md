@@ -1,5 +1,10 @@
 # LabConnect — Wire Protocol Specification
 
+> Target protocol design, not a complete description of the running app. The
+> current TCP transport is plaintext and some message types are not implemented
+> on every client. See [README.md](README.md) and [SECURITY.md](SECURITY.md) for
+> current behavior.
+
 ## Version
 **Protocol Version: 1.0**
 
