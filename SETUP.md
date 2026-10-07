@@ -1,5 +1,23 @@
 # LabConnect Setup Guide
 
+## Install the application
+
+The packaged apps include LabConnect's runtime and application libraries. A JDK,
+Maven, Gradle, and Android Studio are only needed when building from source.
+
+- **Windows:** install the `LabConnect-1.0.0.msi` workflow artifact. It adds a
+  Start Menu entry and desktop shortcut and installs for the current user.
+- **Linux Mint:** download the `labconnect_1.0.0_amd64.deb` workflow artifact
+  and install it with `sudo apt install ./labconnect_1.0.0_amd64.deb`.
+- **Android:** install the `app-debug.apk` workflow artifact. Android may ask
+  you to allow installs from the app used to open the APK.
+
+The desktop package includes a Java runtime and JavaFX. Linux package manager
+will install any standard operating-system libraries the desktop needs. The
+Android APK includes its Android-side libraries. Installed desktop settings,
+identity, trust list, logs, and received files live in the user's application
+data directory.
+
 ## Prerequisites
 
 ### Desktop (Windows/Linux/macOS)
@@ -18,15 +36,11 @@ java -version
 mvn -version
 ```
 
-### Android
-- **Android Studio** (latest stable)
+### Android source build
+- **Android Studio** or Android SDK 34
+- **JDK 17+**
+- Gradle 8.6 downloads automatically through the checked-in wrapper
 - **Min SDK**: API 24 (Android 7.0)
-- **Target SDK**: API 34 (Android 14)
-
-The Android tree is an unfinished prototype. Discovery UI is present, but there
-is no complete Android chat or file-transfer implementation. No Gradle wrapper
-or Android SDK is included in this repository; Android build/device validation
-has not been performed for the current repair copy.
 
 ---
 
@@ -94,7 +108,8 @@ sudo ufw allow 50001/udp
 ## Configuration
 
 ### Desktop Config (`config.yaml`)
-Auto-generated on first run at `./config.yaml`:
+Source builds create `./config.yaml` in the current working directory. Installed
+builds create it in the user's LabConnect application data directory:
 
 ```yaml
 device:
@@ -136,29 +151,26 @@ mvn javafx:run
 java -jar target/labconnect-core-1.0.0-SNAPSHOT.jar
 ```
 
-The fat jar bundles all dependencies, so `java -jar` works standalone.
+The fat jar bundles Java and JavaFX application libraries, but needs a compatible
+Java runtime. The Windows MSI and Linux Mint DEB bundle their own runtime too.
 
-**Note on configuration:** the launcher takes no CLI flags. `config.yaml` is
-read from the current working directory, so run the app from the project root,
-or copy `config.yaml` next to wherever you launch it. There is no `--config`,
-`--headless` or `--diagnostics` flag, and `-Dlabconnect.*` system properties
-are **not** read - edit `config.yaml` to change ports or the device name.
+Edit the generated `config.yaml` to change the desktop device name or ports.
+Installed builds keep configuration in the user's LabConnect application data
+directory; source builds use their current working directory.
 
 ### Android
 1. Install APK on device
 2. Grant permissions when prompted:
-   - **Location** (required for Wi-Fi scanning)
-   - **Nearby Devices** (Android 12+)
-   - **Files and Media** (for file transfers)
-3. Launch app, set device name
-4. App runs discovery in foreground service
+   - **Location** on Android 12 and older
+   - **Nearby devices** on Android 13 and newer
+3. Launch the app. Select a discovered device and tap **Connect** to chat or send a file.
+4. Accept or decline incoming file requests. Received files are stored in the app's private received-files folder.
 
 ---
 
 ## First Run Checklist
 
-- [ ] Java 17+ installed and in PATH
-- [ ] Maven 3.8+ installed (for building)
+- [ ] Install the Windows MSI, Linux Mint DEB, or Android APK
 - [ ] Port 5000 TCP allowed in firewall
 - [ ] Port 50001 UDP allowed in firewall
 - [ ] All devices on same Wi-Fi network
@@ -203,7 +215,7 @@ filter multicast (some guest Wi-Fi, some VLANs) will block discovery.
 ## Logs & Diagnostics
 
 ### Log Files
-- Desktop: `./logs/labconnect.log`
+- Desktop: `logs/labconnect.log` in the user's LabConnect application data directory for installed builds
 - Android: `logcat | grep LabConnect`
 
 ### Diagnostic Report

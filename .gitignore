@@ -1,9 +1,11 @@
 # ---- Build output ----
 target/
 build/
+dist/
 *.class
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
 
 # ---- Bundled Gradle distributions (815MB!) ----
 # These are downloaded binaries, not source. Without this the repo is ~843MB

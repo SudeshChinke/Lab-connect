@@ -16,7 +16,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22" apply false
 }
 
-tasks.register("wrapper", Wrapper::class) {
-    gradleVersion = "8.5"
+tasks.named<Wrapper>("wrapper") {
+    gradleVersion = "8.6"
     distributionType = Wrapper.DistributionType.BIN
 }

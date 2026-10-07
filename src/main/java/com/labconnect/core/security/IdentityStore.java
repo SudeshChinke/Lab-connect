@@ -2,12 +2,12 @@ package com.labconnect.core.security;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.labconnect.core.config.AppPaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,9 +18,8 @@ import java.util.Set;
  * one on first run (as SECURITY.md specifies: "Ed25519 key pair generated on
  * first run, stored in keystore.dat").
  *
- * <p>The file lives in the current working directory, the same convention
- * {@code AppConfig} uses for config.yaml: one directory per instance. Whoever
- * shares a directory shares an identity, exactly as they share settings.
+ * <p>Source runs keep this file in the current working directory. Packaged
+ * builds store it under the operating system's per-user application data folder.
  *
  * <p>Format: two Base64 lines - private key, then public key. A malformed or
  * unreadable file is replaced with a freshly generated identity (logged),
@@ -37,9 +36,9 @@ public final class IdentityStore {
 
     private IdentityStore() {}
 
-    /** Default identity path: {@code ./keystore.dat}. */
+    /** Default identity path, scoped to this source run or installed user. */
     public static Path defaultPath() {
-        return Paths.get(DEFAULT_IDENTITY_FILE);
+        return AppPaths.identityPath();
     }
 
     /**

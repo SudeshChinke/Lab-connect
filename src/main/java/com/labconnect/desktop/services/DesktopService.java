@@ -1,6 +1,7 @@
 package com.labconnect.desktop.services;
 
 import com.labconnect.core.config.AppConfig;
+import com.labconnect.core.config.AppPaths;
 import com.labconnect.core.diagnostics.DiagnosticsManager;
 import com.labconnect.core.discovery.DiscoveryManager;
 import com.labconnect.core.messaging.ChatManager;
@@ -116,14 +117,14 @@ public class DesktopService {
             connectionManager,
             localDeviceId,
             config,
-            java.nio.file.Paths.get("downloads"),
+            AppPaths.downloadsDirectory(),
             tr -> onTransferProgress.accept(tr),
             tr -> onTransferCompleted.accept(tr),
             tr -> onTransferFailed.accept(tr)
         );
         
         Path trustStorePath = identityFile.equals(IdentityStore.defaultPath())
-            ? Path.of("truststore.properties")
+            ? AppPaths.trustStorePath()
             : identityFile.resolveSibling("truststore.properties");
         TrustStore trustStore = new TrustStore(trustStorePath);
         this.pairingManager = new PairingManager(

@@ -9,7 +9,10 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.labconnect.android.R
 import com.labconnect.android.network.DiscoveryManager
+import com.labconnect.android.network.Protocol
+import com.labconnect.android.security.AndroidIdentityStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +20,7 @@ import kotlinx.coroutines.launch
 
 class DiscoveryService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val identity by lazy { AndroidIdentityStore(this).loadOrCreate() }
     private var discoveryManager: DiscoveryManager? = null
     private val NOTIFICATION_ID = 1001
     private val CHANNEL_ID = "discovery_channel"
@@ -31,7 +35,7 @@ class DiscoveryService : Service() {
                 context = this@DiscoveryService,
                 localDeviceId = getLocalDeviceId(),
                 localDeviceName = getLocalDeviceName(),
-                localTcpPort = 50000,
+                localTcpPort = Protocol.TCP_PORT,
                 localPublicKey = getLocalPublicKey()
             )
             discoveryManager?.start()
@@ -70,8 +74,7 @@ class DiscoveryService : Service() {
     }
     
     private fun getLocalDeviceId(): String {
-        return getSharedPreferences("labconnect_prefs", MODE_PRIVATE)
-            .getString("device_id", "ANDROID-${(10000..99999).random()}")!!
+        return identity.deviceId
     }
     
     private fun getLocalDeviceName(): String {
@@ -80,7 +83,6 @@ class DiscoveryService : Service() {
     }
     
     private fun getLocalPublicKey(): String {
-        return getSharedPreferences("labconnect_prefs", MODE_PRIVATE)
-            .getString("public_key", "android-key-${(10000..99999).random()}")!!
+        return identity.publicKeyBase64
     }
 }

@@ -1,20 +1,16 @@
 package com.labconnect.android.network
 
-import kotlinx.serialization.json.Json
 import kotlin.reflect.KClass
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
 
 object FrameCodec {
-    private val json = Json { ignoreUnknownKeys = true }
-    
-    companion object {
-        const val HEADER_SIZE = 8
-        const val MESSAGE_ID_SIZE = 16
-        const val MAX_FRAME_SIZE = 16 * 1024 * 1024 // 16MB
-        
-        fun encode(frame: Frame): ByteArray {
+    const val HEADER_SIZE = 8
+    const val MESSAGE_ID_SIZE = 16
+    const val MAX_FRAME_SIZE = 16 * 1024 * 1024 // 16MB
+
+    fun encode(frame: Frame): ByteArray {
             val payload = frame.payload
             val totalLength = HEADER_SIZE + MESSAGE_ID_SIZE + payload.size
             
@@ -23,7 +19,7 @@ object FrameCodec {
             }
             
             val buffer = ByteBuffer.allocate(totalLength)
-            buffer.order = ByteOrder.BIG_ENDIAN
+            buffer.order(ByteOrder.BIG_ENDIAN)
             buffer.putInt(totalLength)
             buffer.put(frame.type)
             buffer.put(frame.flags)
@@ -39,11 +35,11 @@ object FrameCodec {
             return buffer.array()
         }
         
-        fun decode(buffer: ByteArray): Frame? {
+    fun decode(buffer: ByteArray): Frame? {
             if (buffer.size < HEADER_SIZE) return null
             
             val bb = ByteBuffer.wrap(buffer)
-            bb.order = ByteOrder.BIG_ENDIAN
+            bb.order(ByteOrder.BIG_ENDIAN)
             
             val length = bb.getInt()
             val type = bb.get()
@@ -67,20 +63,19 @@ object FrameCodec {
             return Frame(type, flags, messageId, payload)
         }
         
-        fun hasCompleteFrame(buffer: ByteArray): Boolean {
+    fun hasCompleteFrame(buffer: ByteArray): Boolean {
             if (buffer.size < HEADER_SIZE) return false
             val bb = ByteBuffer.wrap(buffer)
-            bb.order = ByteOrder.BIG_ENDIAN
+            bb.order(ByteOrder.BIG_ENDIAN)
             val length = bb.getInt()
             return buffer.size >= length
         }
         
-        fun parseJsonPayload(frame: Frame, clazz: KClass<*>): Any? {
+    fun parseJsonPayload(frame: Frame, clazz: KClass<*>): Any? {
             return try {
                 com.google.gson.Gson().fromJson(String(frame.payload, Charsets.UTF_8), clazz.java)
             } catch (e: Exception) {
                 null
             }
         }
-    }
 }

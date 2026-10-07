@@ -10,7 +10,7 @@ This document describes the code that currently runs, not the intended future de
 - Desktop pairing requests, accept/reject responses, a fingerprint prompt, and persistence of accepted public keys are implemented. Users should compare fingerprints through a separate trusted channel. This reduces accidental trust but does not protect a plaintext connection from an active attacker.
 - File transfer checks a SHA-256 hash to detect accidental or malicious content changes against the hash in the transfer request. Without authenticated transport, an active network attacker can alter both the data and advertised hash.
 - `TlsContextManager` contains TLS certificate/context code, but it is not used by the socket transport. TLS configuration settings do not turn encryption on.
-- Android is a prototype and does not yet implement the desktop security or communication flows.
+- Android currently implements discovery, direct text messaging, and file transfers, but it has no TLS transport or pairing enforcement. Its private Ed25519 key is stored as Base64 in app-private SharedPreferences without encryption.
 
 ## Local data
 
@@ -28,4 +28,4 @@ Use LabConnect only for testing on a network you trust. Do not use it for privat
 2. Bind the TLS certificate identity to the device ID exchanged in HELLO.
 3. Enforce pairing policy before application frames are accepted or sent.
 4. Add tests proving encrypted transfer, rejection of untrusted peers, and rejection of mismatched identities.
-5. Review Android identity storage and bring its transport/security behavior to parity.
+5. Move Android identity storage to Android Keystore-backed encryption and bring its transport/security behavior to parity.

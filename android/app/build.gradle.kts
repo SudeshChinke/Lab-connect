@@ -53,6 +53,7 @@ android {
     packagingOptions {
         resources {
             excludes += "/META-INF/{LICENSE,NOTICE}*"
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
 }

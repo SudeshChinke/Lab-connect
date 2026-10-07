@@ -10,7 +10,6 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,7 +26,7 @@ import java.util.Map;
  */
 public class AppConfig {
 
-    private static final Path CONFIG_PATH = Paths.get("config.yaml");
+    private static final Path CONFIG_PATH = AppPaths.configPath();
 
     private static final DumperOptions DUMPER_OPTIONS = createDumperOptions();
 
@@ -76,14 +75,17 @@ public class AppConfig {
         }
         Path example = CONFIG_PATH.resolveSibling("config.example.yaml");
         try {
+            Path parent = CONFIG_PATH.toAbsolutePath().getParent();
+            if (parent != null) Files.createDirectories(parent);
             if (Files.exists(example)) {
                 Files.copy(example, CONFIG_PATH);
                 System.out.println("Created " + CONFIG_PATH + " from config.example.yaml");
             } else {
-                // No example present (e.g. running from a packaged jar): write
-                // the defaults so the user gets a real file to edit.
-                new AppConfig().save(CONFIG_PATH);
-                System.out.println("Created default " + CONFIG_PATH);
+                try (var input = AppConfig.class.getResourceAsStream("/config.example.yaml")) {
+                    if (input != null) Files.copy(input, CONFIG_PATH);
+                    else new AppConfig().save(CONFIG_PATH);
+                }
+                System.out.println("Created " + CONFIG_PATH + " with application defaults");
             }
         } catch (IOException e) {
             System.err.println("Could not create " + CONFIG_PATH + ": " + e.getMessage()

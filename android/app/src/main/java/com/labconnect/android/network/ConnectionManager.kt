@@ -1,250 +1,284 @@
 package com.labconnect.android.network
 
 import android.util.Log
-import kotlinx.coroutines.*
+import com.labconnect.android.security.AndroidIdentityStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
-import java.nio.charset.Charset
-import java.nio.charset.StandardCharsets
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+/** TCP client/server and framing compatible with the desktop Java transport. */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 class ConnectionManager(
-    private val localDeviceId: String
+    private val identity: AndroidIdentityStore.Identity,
+    private val localDeviceName: String
 ) {
     private val connections = ConcurrentHashMap<String, Connection>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val frameHandlers = mutableMapOf<Byte, (Connection, Frame) -> Unit>()
-    private val json = Json { ignoreUnknownKeys = true }
-    
+    private val frameHandlers = ConcurrentHashMap<Byte, (Connection, Frame) -> Unit>()
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
+    private var server: ServerSocketChannel? = null
+    @Volatile private var onMessageReceived: (TextMessage) -> Unit = {}
+    @Volatile private var onConnectionChanged: (String, Boolean) -> Unit = { _, _ -> }
+
     data class Connection(
-        var remoteDeviceId: String,
+        @Volatile var remoteDeviceId: String,
         val socket: SocketChannel,
         val remoteAddress: InetSocketAddress,
-        val sendChannel: Channel<Frame> = Channel(100),
-        val receiveBuffer: ByteArray = ByteArray(65536)
+        val sendChannel: Channel<Frame> = Channel(64)
     ) {
-        var connected = false
-        var lastHeartbeat = System.currentTimeMillis()
+        @Volatile var connected: Boolean = false
     }
-    
+
     init {
-        // Register default handlers
-        registerHandler(Protocol.TYPE_HELLO) { conn, frame -> handleHello(conn, frame) }
-        registerHandler(Protocol.TYPE_ACK) { conn, frame -> handleAck(conn, frame) }
-        registerHandler(Protocol.TYPE_HEARTBEAT) { conn, frame -> handleHeartbeat(conn, frame) }
-        registerHandler(Protocol.TYPE_TEXT_MESSAGE) { conn, frame -> handleTextMessage(conn, frame) }
-        registerHandler(Protocol.TYPE_MESSAGE_ACK) { conn, frame -> handleMessageAck(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_REQUEST) { conn, frame -> handleFileRequest(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_ACCEPT) { conn, frame -> handleFileAccept(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_CHUNK) { conn, frame -> handleFileChunk(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_CHUNK_ACK) { conn, frame -> handleFileChunkAck(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_COMPLETE) { conn, frame -> handleFileComplete(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_VERIFIED) { conn, frame -> handleFileVerified(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_CANCEL) { conn, frame -> handleFileCancel(conn, frame) }
-        registerHandler(Protocol.TYPE_FILE_RESUME) { conn, frame -> handleFileResume(conn, frame) }
-    }
-    
-    fun connect(host: String, port: Int): Connection? {
-        return try {
-            val socket = SocketChannel.open()
-            socket.configureBlocking(false)
-            socket.connect(InetSocketAddress(host, port))
-            
-            // Wait for connection
-            while (!socket.finishConnect()) {
-                Thread.sleep(10)
+        registerHandler(Protocol.TYPE_HELLO, ::handleHello)
+        registerHandler(Protocol.TYPE_TEXT_MESSAGE, ::handleTextMessage)
+        registerHandler(Protocol.TYPE_MESSAGE_ACK) { _, _ -> }
+        registerHandler(Protocol.TYPE_HEARTBEAT, ::handleHeartbeat)
+        registerHandler(Protocol.TYPE_ACK) { _, _ -> }
+        scope.launch {
+            while (scope.coroutineContext.isActive) {
+                delay(Protocol.HEARTBEAT_INTERVAL_MS.toLong())
+                val payload = "{\"timestamp\":${System.currentTimeMillis()},\"sequence\":${System.nanoTime()}}"
+                getAllConnections().forEach { connection ->
+                    send(connection, Protocol.TYPE_HEARTBEAT, UUID.randomUUID(), payload)
+                }
             }
-            socket.configureBlocking(true)
-            
-            val remoteAddress = InetSocketAddress(host, port)
-            val connection = Connection("pending", socket, remoteAddress)
-            connections["$host:$port"] = connection
-            
-            // Start read loop
-            scope.launch { readLoop(connection) }
-            scope.launch { writeLoop(connection) }
-            
-            connection
+        }
+    }
+
+    fun setOnMessageReceived(handler: ((TextMessage) -> Unit)?) {
+        onMessageReceived = handler ?: {}
+    }
+
+    fun setOnConnectionChanged(handler: ((String, Boolean) -> Unit)?) {
+        onConnectionChanged = handler ?: { _, _ -> }
+    }
+
+    fun startServer(port: Int = Protocol.TCP_PORT) {
+        if (server != null) return
+        scope.launch {
+            try {
+                val listener = ServerSocketChannel.open().apply {
+                    configureBlocking(true)
+                    bind(InetSocketAddress(port))
+                }
+                server = listener
+                Log.i(TAG, "Listening for peers on TCP $port")
+                while (scope.coroutineContext.isActive && listener.isOpen) {
+                    val socket = listener.accept() ?: continue
+                    socket.configureBlocking(true)
+                    openConnection(socket)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (scope.coroutineContext.isActive) Log.e(TAG, "TCP listener failed on $port", e)
+            }
+        }
+    }
+
+    suspend fun connect(host: String, port: Int): Connection? = withContext(Dispatchers.IO) {
+        try {
+            val socket = SocketChannel.open().apply {
+                configureBlocking(true)
+                socket().connect(InetSocketAddress(host, port), Protocol.CONNECTION_TIMEOUT_MS)
+            }
+            openConnection(socket)
         } catch (e: Exception) {
-            Log.e("ConnectionManager", "Connect failed", e)
+            Log.e(TAG, "Connect to $host:$port failed", e)
             null
         }
     }
-    
-    fun acceptConnection(socket: SocketChannel, remoteDeviceId: String): Connection {
-        val remoteAddress = socket.remoteAddress as InetSocketAddress
-        val connection = Connection(remoteDeviceId, socket, remoteAddress)
-        connections["${remoteAddress.address.hostAddress}:${remoteAddress.port}"] = connection
-        
+
+    private fun openConnection(socket: SocketChannel): Connection {
+        val address = socket.remoteAddress as InetSocketAddress
+        val connection = Connection("pending:${address.address.hostAddress}:${address.port}", socket, address)
+        connections[connection.remoteDeviceId] = connection
         scope.launch { readLoop(connection) }
         scope.launch { writeLoop(connection) }
-        
+        sendHello(connection)
         return connection
     }
-    
-    fun sendFrame(connection: Connection, frame: Frame) {
-        connection.sendChannel.trySend(frame)
+
+    fun getConnection(deviceId: String): Connection? =
+        connections[deviceId]?.takeIf { it.connected && it.socket.isOpen }
+
+    fun getAllConnections(): List<Connection> = connections.values.distinct().filter { it.connected }
+
+    fun sendMessage(targetDeviceId: String, content: String): TextMessage? {
+        val connection = getConnection(targetDeviceId) ?: return null
+        val message = TextMessage(
+            chatId = listOf(identity.deviceId, targetDeviceId).sorted().joinToString("-"),
+            senderId = identity.deviceId,
+            content = content,
+            timestamp = Instant.now().toString()
+        )
+        send(connection, Protocol.TYPE_TEXT_MESSAGE, UUID.fromString(message.messageId), json.encodeToString(message))
+        return message
     }
-    
+
+    fun sendFrame(connection: Connection, frame: Frame) {
+        if (connection.socket.isOpen) connection.sendChannel.trySend(frame)
+    }
+
+    suspend fun sendFrameAwait(connection: Connection, frame: Frame) {
+        if (connection.socket.isOpen) connection.sendChannel.send(frame)
+    }
+
     fun registerHandler(type: Byte, handler: (Connection, Frame) -> Unit) {
         frameHandlers[type] = handler
     }
-    
-    fun getConnection(deviceId: String): Connection? {
-        return connections.values.firstOrNull { it.remoteDeviceId == deviceId }
-    }
-    
-    fun getAllConnections(): List<Connection> {
-        return connections.values.toList()
-    }
-    
+
     fun closeConnection(deviceId: String) {
-        connections.values.firstOrNull { it.remoteDeviceId == deviceId }?.let { conn ->
-            conn.socket.close()
-            connections.values.remove(conn)
-        }
+        connections[deviceId]?.let(::closeConnection)
     }
-    
+
+    private fun sendHello(connection: Connection) {
+        val hello = HelloMessage(
+            deviceId = identity.deviceId,
+            deviceName = localDeviceName,
+            deviceType = Protocol.DEVICE_TYPE_MOBILE,
+            publicKey = identity.publicKeyBase64
+        )
+        send(connection, Protocol.TYPE_HELLO, UUID.randomUUID(), json.encodeToString(hello))
+    }
+
+    private fun send(connection: Connection, type: Byte, id: UUID, payload: String) {
+        sendFrame(connection, Frame.create(type, 0, id, payload.toByteArray(Charsets.UTF_8)))
+    }
+
     private suspend fun readLoop(connection: Connection) {
-        val buffer = ByteBuffer.allocate(65536)
-        buffer.order = ByteOrder.BIG_ENDIAN
-        
-        while (connection.socket.isOpen) {
-            try {
-                val bytesRead = connection.socket.read(buffer)
-                if (bytesRead == -1) break // EOF
-                
-                buffer.flip()
-                processBuffer(connection, buffer)
-                buffer.compact()
-            } catch (e: IOException) {
-                Log.e("ConnectionManager", "Read error", e)
-                break
-            }
-        }
-        closeConnection(connection)
-    }
-    
-    private fun processBuffer(connection: Connection, buffer: ByteBuffer) {
-        while (buffer.remaining() >= FrameCodec.HEADER_SIZE) {
-            val frameStart = buffer.position()
-            val frameLength = buffer.getInt()
-            buffer.position(frameStart)
-            if (frameLength < FrameCodec.HEADER_SIZE + FrameCodec.MESSAGE_ID_SIZE ||
-                frameLength > FrameCodec.MAX_FRAME_SIZE) {
-                throw IllegalArgumentException("Invalid frame length: $frameLength")
-            }
-            if (buffer.remaining() < frameLength) return
-            val encodedFrame = ByteArray(frameLength)
-            buffer.get(encodedFrame)
-            val frame = FrameCodec.decode(encodedFrame) ?: return
-            frameHandlers[frame.type]?.invoke(connection, frame)
-        }
-    }
-    
-    private suspend fun writeLoop(connection: Connection) {
-        for (frame in connection.sendChannel) {
-            try {
-                val data = FrameCodec.encode(frame)
-                val buffer = ByteBuffer.wrap(data)
-                while (buffer.hasRemaining()) connection.socket.write(buffer)
-            } catch (e: IOException) {
-                Log.e("ConnectionManager", "Write error", e)
-                break
-            }
-        }
-    }
-    
-    private fun closeConnection(connection: Connection) {
+        var buffer = ByteBuffer.allocate(64 * 1024)
         try {
-            connection.socket.close()
-        } catch (e: IOException) {
-            Log.e("ConnectionManager", "Close error", e)
+            while (connection.socket.isOpen) {
+                if (!buffer.hasRemaining()) buffer = grow(buffer)
+                val count = connection.socket.read(buffer)
+                if (count < 0) break
+                buffer.flip()
+                while (buffer.remaining() >= FrameCodec.HEADER_SIZE) {
+                    val start = buffer.position()
+                    val length = buffer.getInt()
+                    buffer.position(start)
+                    require(length in (FrameCodec.HEADER_SIZE + FrameCodec.MESSAGE_ID_SIZE)..FrameCodec.MAX_FRAME_SIZE) {
+                        "Invalid protocol frame length: $length"
+                    }
+                    if (buffer.remaining() < length) break
+                    val encoded = ByteArray(length)
+                    buffer.get(encoded)
+                    FrameCodec.decode(encoded)?.let { frameHandlers[it.type]?.invoke(connection, it) }
+                }
+                buffer.compact()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Read failed from ${connection.remoteAddress}", e)
+        } finally {
+            closeConnection(connection)
         }
-        connections.values.remove(connection)
     }
-    
-    // Frame handlers
+
+    private fun grow(buffer: ByteBuffer): ByteBuffer {
+        require(buffer.capacity() < FrameCodec.MAX_FRAME_SIZE) { "Protocol frame exceeds maximum size" }
+        val grown = ByteBuffer.allocate((buffer.capacity() * 2).coerceAtMost(FrameCodec.MAX_FRAME_SIZE))
+        buffer.flip()
+        grown.put(buffer)
+        return grown
+    }
+
+    private suspend fun writeLoop(connection: Connection) {
+        try {
+            for (frame in connection.sendChannel) {
+                val buffer = ByteBuffer.wrap(FrameCodec.encode(frame))
+                while (buffer.hasRemaining()) connection.socket.write(buffer)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Write failed to ${connection.remoteAddress}", e)
+        } finally {
+            closeConnection(connection)
+        }
+    }
+
     private fun handleHello(connection: Connection, frame: Frame) {
-        // Parse hello and send ACK
-        val hello = json.decodeFromString(HelloMessage.serializer(), String(frame.payload, Charsets.UTF_8))
-        connection.remoteDeviceId = hello.deviceId
-        connections[hello.deviceId] = connection
-        connection.connected = true
-        
-        // Send ACK
-        val ack = AckMessage(
-            originalMessageId = frame.messageId.toString(),
-            status = "OK"
-        )
-        val ackFrame = Frame.create(
-            Protocol.TYPE_ACK, 0, UUID.randomUUID(),
-            json.encodeToString(AckMessage.serializer(), ack).toByteArray(Charsets.UTF_8)
-        )
-        sendFrame(connection, ackFrame)
+        try {
+            val hello = json.decodeFromString(HelloMessage.serializer(), String(frame.payload, Charsets.UTF_8))
+            require(hello.deviceId == deriveDeviceId(hello.publicKey)) { "HELLO public key does not match device id" }
+            val previous = connections.put(hello.deviceId, connection)
+            if (previous != null && previous !== connection) closeConnection(previous)
+            connection.remoteDeviceId = hello.deviceId
+            connection.connected = true
+            onConnectionChanged(hello.deviceId, true)
+        } catch (e: Exception) {
+            Log.w(TAG, "Invalid HELLO from ${connection.remoteAddress}", e)
+            closeConnection(connection)
+        }
     }
-    
-    private fun handleAck(connection: Connection, frame: Frame) {
-        // Handle ACK
-    }
-    
-    private fun handleHeartbeat(connection: Connection, frame: Frame) {
-        connection.lastHeartbeat = System.currentTimeMillis()
-        // Send PONG
-        val pong = Frame.pong(frame.messageId)
-        sendFrame(connection, pong)
-    }
-    
+
     private fun handleTextMessage(connection: Connection, frame: Frame) {
-        // Forward to message handler
+        try {
+            val message = json.decodeFromString(TextMessage.serializer(), String(frame.payload, Charsets.UTF_8))
+            require(message.senderId == connection.remoteDeviceId) { "Message sender does not match peer" }
+            onMessageReceived(message)
+            val ack = MessageAcknowledgement(frame.messageId.toString(), "DELIVERED")
+            send(connection, Protocol.TYPE_MESSAGE_ACK, UUID.randomUUID(), json.encodeToString(ack))
+        } catch (e: Exception) {
+            Log.w(TAG, "Invalid message from ${connection.remoteAddress}", e)
+        }
     }
-    
-    private fun handleMessageAck(connection: Connection, frame: Frame) {
-        // Handle message ACK
+
+    private fun handleHeartbeat(connection: Connection, frame: Frame) {
+        val ack = AckMessage(frame.messageId.toString(), "OK")
+        send(connection, Protocol.TYPE_ACK, UUID.randomUUID(), json.encodeToString(ack))
     }
-    
-    private fun handleFileRequest(connection: Connection, frame: Frame) {
-        // Handle file request
+
+    private fun closeConnection(connection: Connection) {
+        val peerId = connection.remoteDeviceId
+        connections.entries.removeIf { it.value === connection }
+        connection.connected = false
+        connection.sendChannel.close()
+        try { connection.socket.close() } catch (_: IOException) { }
+        if (peerId.startsWith("DEVICE-")) onConnectionChanged(peerId, false)
     }
-    
-    private fun handleFileAccept(connection: Connection, frame: Frame) {
-        // Handle file accept
-    }
-    
-    private fun handleFileChunk(connection: Connection, frame: Frame) {
-        // Handle file chunk
-    }
-    
-    private fun handleFileChunkAck(connection: Connection, frame: Frame) {
-        // Handle chunk ACK
-    }
-    
-    private fun handleFileComplete(connection: Connection, frame: Frame) {
-        // Handle file complete
-    }
-    
-    private fun handleFileVerified(connection: Connection, frame: Frame) {
-        // Handle file verified
-    }
-    
-    private fun handleFileCancel(connection: Connection, frame: Frame) {
-        // Handle file cancel
-    }
-    
-    private fun handleFileResume(connection: Connection, frame: Frame) {
-        // Handle file resume
-    }
-    
+
     fun shutdown() {
+        try { server?.close() } catch (_: IOException) { }
+        server = null
+        connections.values.distinct().forEach(::closeConnection)
         scope.cancel()
-        connections.values.forEach { it.socket.close() }
-        connections.clear()
     }
+
+    private fun deriveDeviceId(publicKeyBase64: String): String {
+        val encoded = android.util.Base64.decode(publicKeyBase64, android.util.Base64.NO_WRAP)
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(encoded)
+        return "DEVICE-" + hash.take(8).joinToString("") { "%02X".format(it.toInt() and 0xff) }
+    }
+
+    companion object { private const val TAG = "AndroidConnection" }
 }
+
+@Serializable
+data class MessageAcknowledgement(
+    val originalMessageId: String,
+    val status: String = "DELIVERED",
+    val timestamp: Long = System.currentTimeMillis()
+)

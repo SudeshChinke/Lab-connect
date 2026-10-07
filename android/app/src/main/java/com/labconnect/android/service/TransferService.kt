@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 class TransferService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())

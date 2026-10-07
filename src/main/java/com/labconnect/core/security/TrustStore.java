@@ -11,12 +11,13 @@ import java.util.Properties;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import com.labconnect.core.config.AppPaths;
 
 public class TrustStore implements Serializable {
     private final Map<String, TrustedPeer> trustedPeers = new java.util.concurrent.ConcurrentHashMap<>();
     private final Path path;
 
-    public TrustStore() { this(Path.of("truststore.properties")); }
+    public TrustStore() { this(AppPaths.trustStorePath()); }
 
     public TrustStore(Path path) {
         this.path = path;

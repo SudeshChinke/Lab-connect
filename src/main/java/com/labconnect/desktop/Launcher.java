@@ -1,6 +1,7 @@
 package com.labconnect.desktop;
 
 import com.labconnect.core.config.AppConfig;
+import com.labconnect.core.config.AppPaths;
 import javafx.application.Application;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +11,10 @@ import org.slf4j.LoggerFactory;
  * is print the banner and hand control to the JavaFX application.
  */
 public class Launcher {
+    static {
+        System.setProperty("labconnect.log.dir", AppPaths.dataDirectory().resolve("logs").toString());
+    }
+
     private static final Logger log = LoggerFactory.getLogger(Launcher.class);
 
     public static void main(String[] args) {
@@ -33,7 +38,7 @@ public class Launcher {
         log.info("  Pairing Required: {}", config.getSecurity().isRequirePairing());
 
         config.save();
-        log.info("Configuration saved to config.yaml");
+        log.info("Configuration saved to {}", AppPaths.configPath());
 
         log.info("Status: Starting JavaFX application...");
         Application.launch(LabConnectApp.class, args);

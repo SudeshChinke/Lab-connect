@@ -8,6 +8,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.net.*
 import java.nio.ByteBuffer
@@ -27,6 +28,7 @@ class DiscoveryManager(
     private var multicastSocket: MulticastSocket? = null
     private var broadcastSocket: DatagramSocket? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     private val isRunning = AtomicBoolean(false)
     private val json = Json { ignoreUnknownKeys = true }
     private var currentNetwork: Network? = null
@@ -45,7 +47,11 @@ class DiscoveryManager(
     
     fun start() {
         if (isRunning.getAndSet(true)) return
-        
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        multicastLock = wifi.createMulticastLock("LabConnect:discovery").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
         setupNetworkMonitoring()
         startDiscovery()
     }
@@ -59,9 +65,12 @@ class DiscoveryManager(
         broadcastSocket = null
         
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        networkCallback?.let { cm.unregisterNetworkCallback(it) }
+        val callback = networkCallback
+        if (callback != null) cm.unregisterNetworkCallback(callback)
         networkCallback = null
         currentNetwork = null
+        multicastLock?.let { if (it.isHeld) it.release() }
+        multicastLock = null
     }
     
     fun addListener(listener: (List<DiscoveredDevice>) -> Unit) {
@@ -83,7 +92,7 @@ class DiscoveryManager(
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .build()
         
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
+        val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 currentNetwork = network
                 Log.d("DiscoveryManager", "Network available: $network")
@@ -99,8 +108,8 @@ class DiscoveryManager(
                 }
             }
         }
-        
-        cm.registerNetworkCallback(request, networkCallback)
+        networkCallback = callback
+        cm.registerNetworkCallback(request, callback)
     }
     
     private fun restartDiscovery() {
@@ -117,18 +126,17 @@ class DiscoveryManager(
     
     private fun startSockets() {
         try {
-            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val wifiInfo = wifiManager.connectionInfo
-            val localIp = intToIp(wifiInfo.ipAddress)
-            
             // Multicast socket
-            multicastSocket = MulticastSocket(Protocol.DISCOVERY_PORT).apply {
-                setReuseAddress(true)
+            multicastSocket = MulticastSocket(null).apply {
+                reuseAddress = true
+                bind(InetSocketAddress(Protocol.DISCOVERY_PORT))
+                soTimeout = 1000
                 val group = InetAddress.getByName(Protocol.MULTICAST_GROUP)
-                val networkInterface = NetworkInterface.getByInetAddress(InetAddress.getByName(localIp))
-                if (networkInterface != null) {
-                    joinGroup(SocketAddress(group, Protocol.DISCOVERY_PORT), networkInterface)
-                }
+                val networkInterface = NetworkInterface.getNetworkInterfaces().toList()
+                    .firstOrNull { it.isUp && it.supportsMulticast() && it.inetAddresses.toList().any { addr -> !addr.isLoopbackAddress } }
+                    ?: throw IllegalStateException("No multicast-capable network interface")
+                setNetworkInterface(networkInterface)
+                joinGroup(InetSocketAddress(group, Protocol.DISCOVERY_PORT), networkInterface)
                 setTimeToLive(2)
             }
             
@@ -138,7 +146,7 @@ class DiscoveryManager(
                 setReuseAddress(true)
             }
             
-            Log.d("DiscoveryManager", "Sockets started on $localIp")
+            Log.d("DiscoveryManager", "Discovery sockets started")
         } catch (e: Exception) {
             Log.e("DiscoveryManager", "Failed to start sockets", e)
         }
@@ -160,7 +168,7 @@ class DiscoveryManager(
             publicKey = localPublicKey
         )
         
-        val jsonData = Json { ignoreUnknownKeys = true }.encodeToString(announcement)
+        val jsonData = Json { ignoreUnknownKeys = true; encodeDefaults = true }.encodeToString(announcement)
         val data = jsonData.toByteArray()
         
         while (isRunning.get()) {
@@ -190,9 +198,8 @@ class DiscoveryManager(
         val buffer = ByteArray(4096)
         
         while (isRunning.get()) {
+            val packet = DatagramPacket(buffer, buffer.size)
             try {
-                val packet = DatagramPacket(buffer, buffer.size)
-                
                 // Try multicast first
                 multicastSocket?.receive(packet)
                 processPacket(packet)
@@ -259,10 +266,4 @@ class DiscoveryManager(
         listeners.forEach { it(devices) }
     }
     
-    private fun intToIp(ip: Int): String {
-        return ((ip shr 24) and 0xFF).toString() + "." +
-               ((ip shr 16) and 0xFF).toString() + "." +
-               ((ip shr 8) and 0xFF).toString() + "." +
-               (ip and 0xFF).toString()
-    }
 }

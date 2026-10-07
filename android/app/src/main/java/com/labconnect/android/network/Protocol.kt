@@ -2,12 +2,13 @@ package com.labconnect.android.network
 
 import kotlinx.serialization.Serializable
 import java.util.UUID
+import java.time.Instant
 
 // Protocol constants
 object Protocol {
     const val VERSION = "1.0"
     const val DISCOVERY_PORT = 50001
-    const val TCP_PORT = 50000
+    const val TCP_PORT = 5000
     const val MULTICAST_GROUP = "239.255.255.250"
     const val BROADCAST_ADDRESS = "255.255.255.255"
     const val ANNOUNCE_INTERVAL_MS = 5000
@@ -101,7 +102,8 @@ data class DeviceAnnounce(
     val protocolVersion: String = Protocol.VERSION,
     val tcpPort: Int = Protocol.TCP_PORT,
     val capabilities: List<String> = listOf(Protocol.CAP_FILE_TRANSFER, Protocol.CAP_GROUPS, Protocol.CAP_ENCRYPTION),
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: String = Instant.now().toString(),
+    val publicKey: String
 )
 
 // Hello message
@@ -121,7 +123,7 @@ data class HelloMessage(
 data class AckMessage(
     val originalMessageId: String,
     val status: String = "OK",
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: String = Instant.now().toString()
 )
 
 // Text message
@@ -132,7 +134,7 @@ data class TextMessage(
     val senderId: String,
     val content: String,
     val contentType: String = "text/plain",
-    val timestamp: Long = System.currentTimeMillis(),
+    val timestamp: String = Instant.now().toString(),
     val replyTo: String? = null,
     val status: String = "SENT"
 )
@@ -148,7 +150,8 @@ data class FileRequest(
     val chunkSize: Int = Protocol.CHUNK_SIZE,
     val totalChunks: Long,
     val senderId: String,
-    val receiverId: String
+    val receiverId: String,
+    val createdAt: String = Instant.now().toString()
 )
 
 @Serializable
@@ -162,28 +165,25 @@ data class FileAccept(
 @Serializable
 data class FileChunk(
     val transferId: String,
-    val chunkSequence: Int,
-    val data: ByteArray
+    val chunkIndex: Long,
+    val data: String
 )
 
 @Serializable
 data class FileChunkAck(
     val transferId: String,
-    val chunkSequence: Int,
-    val status: String = "OK"
+    val chunkIndex: Long
 )
 
 @Serializable
 data class FileComplete(
     val transferId: String,
-    val senderSha256: String
+    val finalHash: String
 )
 
 @Serializable
 data class FileVerified(
-    val transferId: String,
-    val verified: Boolean,
-    val receiverSha256: String
+    val transferId: String
 )
 
 @Serializable
