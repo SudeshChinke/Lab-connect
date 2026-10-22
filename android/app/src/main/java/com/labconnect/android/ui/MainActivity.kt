@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -141,10 +142,11 @@ fun MainScreen(viewModel: MainViewModel, discoveryManager: DiscoveryManager, con
             if (uri != null && peer != null) scope.launch { fileTransfers.sendFile(peer, uri) }
         }
     )
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         Text("LabConnect", style = MaterialTheme.typography.headlineMedium)
         Text(viewModel.status)
         Text("Devices on this Wi-Fi network", style = MaterialTheme.typography.titleMedium)
@@ -200,6 +202,7 @@ fun MainScreen(viewModel: MainViewModel, discoveryManager: DiscoveryManager, con
                 if (viewModel.transferStatus.isNotBlank()) Text(viewModel.transferStatus, modifier = Modifier.padding(8.dp))
             }
         }
+        }
     }
     viewModel.incomingRequests.firstOrNull()?.let { request ->
         AlertDialog(
@@ -235,5 +238,3 @@ private fun rememberDevices(manager: DiscoveryManager): List<DiscoveryManager.Di
     return devices
 }
 
-@Composable
-fun LabConnectTheme(content: @Composable () -> Unit) { MaterialTheme(content = content) }
