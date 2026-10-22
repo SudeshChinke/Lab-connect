@@ -296,7 +296,7 @@ public class AppConfig {
     public static class NetworkConfig {
         private int tcpPort = 5000;
 
-        private int discoveryPort = 50001;
+        private int discoveryPort = 50002;
 
         private String multicastGroup = "239.255.255.250";
 
@@ -367,3 +367,4 @@ public class AppConfig {
         public void setConsoleEnabled(boolean consoleEnabled) { this.consoleEnabled = consoleEnabled; }
     }
 }
+
