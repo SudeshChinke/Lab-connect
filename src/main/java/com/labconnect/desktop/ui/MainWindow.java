@@ -39,6 +39,8 @@ public class MainWindow {
     
     private BorderPane root;
     private ListView<DeviceItem> deviceListView;
+    private Button connectBtn;
+    private Button pairBtn;
     private ListView<ChatItem> chatListView;
     private TabPane tabPane;
     private Tab devicesTab;
@@ -145,9 +147,11 @@ public class MainWindow {
         
         HBox buttonBox = new HBox(10);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
-        Button connectBtn = new Button("Connect");
+        connectBtn = new Button("Connect");
+        connectBtn.setDisable(true);
         connectBtn.setOnAction(e -> connectToSelectedDevice());
-        Button pairBtn = new Button("Pair");
+        pairBtn = new Button("Pair");
+        pairBtn.setDisable(true);
         pairBtn.setOnAction(e -> pairWithSelectedDevice());
         buttonBox.getChildren().addAll(connectBtn, pairBtn);
         
@@ -270,7 +274,7 @@ public class MainWindow {
     private void setupEventHandlers() {
         // Device list selection
         deviceListView.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
-            updateDeviceButtons(sel != null);
+            updateDeviceButtons();
         });
         
         // Push inbound messages and connection changes into the UI. These
@@ -320,10 +324,19 @@ public class MainWindow {
             .filter(com.labconnect.core.networking.Connection::isConnected)
             .count();
         connectionCountLabel.setText("Connections: " + count);
+        updateDeviceButtons();
     }
     
-    private void updateDeviceButtons(boolean hasSelection) {
-        // TODO: Enable/disable connect/pair buttons
+    private void updateDeviceButtons() {
+        DeviceItem selected = deviceListView.getSelectionModel().getSelectedItem();
+        boolean hasSelection = selected != null;
+        boolean connected = hasSelection && service.getConnectionManager()
+            .getConnection(selected.getDeviceId())
+            .filter(com.labconnect.core.networking.Connection::isConnected)
+            .isPresent();
+
+        connectBtn.setDisable(!hasSelection || connected);
+        pairBtn.setDisable(!connected);
     }
     
     private void refreshUI() {
@@ -361,6 +374,7 @@ public class MainWindow {
             }
         }
         statusLabel.setText("Status: Ready - " + deviceListView.getItems().size() + " devices");
+        updateDeviceButtons();
     }
     
     private void refreshDiagnostics(TextArea area) {
@@ -756,3 +770,4 @@ public class MainWindow {
         }
     }
 }
+
