@@ -8,6 +8,8 @@ import java.time.Instant
 object Protocol {
     const val VERSION = "1.0"
     const val DISCOVERY_PORT = 50001
+    const val WINDOWS_FALLBACK_DISCOVERY_PORT = 50002
+    val DISCOVERY_PORTS = intArrayOf(DISCOVERY_PORT, WINDOWS_FALLBACK_DISCOVERY_PORT)
     const val TCP_PORT = 5000
     const val MULTICAST_GROUP = "239.255.255.250"
     const val BROADCAST_ADDRESS = "255.255.255.255"
@@ -204,3 +206,4 @@ data class Heartbeat(
     val timestamp: Long = System.currentTimeMillis(),
     val sequence: Long
 )
+
