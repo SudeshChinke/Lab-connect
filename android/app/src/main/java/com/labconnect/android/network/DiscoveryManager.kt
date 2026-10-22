@@ -25,7 +25,7 @@ class DiscoveryManager(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val discoveredDevices = java.util.concurrent.ConcurrentHashMap<String, DiscoveredDevice>()
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<(List<DiscoveredDevice>) -> Unit>()
-    private var multicastSocket: MulticastSocket? = null
+    @Volatile private var multicastSockets: List<MulticastSocket> = emptyList()
     private var broadcastSocket: DatagramSocket? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -59,9 +59,9 @@ class DiscoveryManager(
     fun stop() {
         isRunning.set(false)
         scope.cancel()
-        multicastSocket?.close()
+        multicastSockets.forEach { it.close() }
+        multicastSockets = emptyList()
         broadcastSocket?.close()
-        multicastSocket = null
         broadcastSocket = null
         
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -126,19 +126,29 @@ class DiscoveryManager(
     
     private fun startSockets() {
         try {
-            // Multicast socket
-            multicastSocket = MulticastSocket(null).apply {
-                reuseAddress = true
-                bind(InetSocketAddress(Protocol.DISCOVERY_PORT))
-                soTimeout = 1000
-                val group = InetAddress.getByName(Protocol.MULTICAST_GROUP)
-                val networkInterface = NetworkInterface.getNetworkInterfaces().toList()
-                    .firstOrNull { it.isUp && it.supportsMulticast() && it.inetAddresses.toList().any { addr -> !addr.isLoopbackAddress } }
-                    ?: throw IllegalStateException("No multicast-capable network interface")
-                setNetworkInterface(networkInterface)
-                joinGroup(InetSocketAddress(group, Protocol.DISCOVERY_PORT), networkInterface)
-                setTimeToLive(2)
+            val group = InetAddress.getByName(Protocol.MULTICAST_GROUP)
+            val networkInterface = NetworkInterface.getNetworkInterfaces().toList()
+                .firstOrNull { it.isUp && it.supportsMulticast() && it.inetAddresses.toList().any { addr -> !addr.isLoopbackAddress } }
+                ?: throw IllegalStateException("No multicast-capable network interface")
+
+            // Listen on the normal desktop port and the Windows fallback port.
+            // Windows may need the fallback when another local service owns 50001.
+            multicastSockets = Protocol.DISCOVERY_PORTS.asIterable().mapNotNull { port ->
+                try {
+                    MulticastSocket(null).apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(port))
+                        soTimeout = 300
+                        setNetworkInterface(networkInterface)
+                        joinGroup(InetSocketAddress(group, port), networkInterface)
+                        setTimeToLive(2)
+                    }
+                } catch (e: Exception) {
+                    Log.w("DiscoveryManager", "Could not listen for multicast discovery on port $port", e)
+                    null
+                }
             }
+            if (multicastSockets.isEmpty()) throw IllegalStateException("Could not bind any discovery port")
             
             // Broadcast socket
             broadcastSocket = DatagramSocket(0).apply {
@@ -153,9 +163,9 @@ class DiscoveryManager(
     }
     
     private fun stopSockets() {
-        multicastSocket?.close()
+        multicastSockets.forEach { it.close() }
+        multicastSockets = emptyList()
         broadcastSocket?.close()
-        multicastSocket = null
         broadcastSocket = null
     }
     
@@ -173,18 +183,19 @@ class DiscoveryManager(
         
         while (isRunning.get()) {
             try {
-                // Send multicast
-                multicastSocket?.let { socket ->
-                    val group = InetAddress.getByName(Protocol.MULTICAST_GROUP)
-                    val packet = DatagramPacket(data, data.size, group, Protocol.DISCOVERY_PORT)
-                    socket.send(packet)
+                // Send on both discovery ports so desktop builds using either
+                // the default or Windows fallback port can discover this device.
+                val group = InetAddress.getByName(Protocol.MULTICAST_GROUP)
+                multicastSockets.forEach { socket ->
+                    val port = socket.localPort
+                    socket.send(DatagramPacket(data, data.size, group, port))
                 }
                 
-                // Send broadcast
                 broadcastSocket?.let { socket ->
                     val broadcastAddr = InetAddress.getByName(Protocol.BROADCAST_ADDRESS)
-                    val packet = DatagramPacket(data, data.size, broadcastAddr, Protocol.DISCOVERY_PORT)
-                    socket.send(packet)
+                    Protocol.DISCOVERY_PORTS.forEach { port ->
+                        socket.send(DatagramPacket(data, data.size, broadcastAddr, port))
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("DiscoveryManager", "Announce error", e)
@@ -198,25 +209,27 @@ class DiscoveryManager(
         val buffer = ByteArray(4096)
         
         while (isRunning.get()) {
-            val packet = DatagramPacket(buffer, buffer.size)
-            try {
-                // Try multicast first
-                multicastSocket?.receive(packet)
-                processPacket(packet)
-                
-            } catch (e: SocketTimeoutException) {
-                // Try broadcast socket
+            multicastSockets.forEach { socket ->
                 try {
-                    broadcastSocket?.setSoTimeout(1000)
-                    broadcastSocket?.receive(packet)
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    socket.receive(packet)
                     processPacket(packet)
-                } catch (e2: SocketTimeoutException) {
-                    // No data, continue
-                } catch (e2: Exception) {
-                    if (isRunning.get()) Log.e("DiscoveryManager", "Broadcast receive error", e2)
+                } catch (_: SocketTimeoutException) {
+                    // Check the other discovery port.
+                } catch (e: Exception) {
+                    if (isRunning.get()) Log.e("DiscoveryManager", "Multicast receive error", e)
                 }
+            }
+
+            try {
+                val packet = DatagramPacket(buffer, buffer.size)
+                broadcastSocket?.setSoTimeout(300)
+                broadcastSocket?.receive(packet)
+                processPacket(packet)
+            } catch (_: SocketTimeoutException) {
+                // No broadcast received; continue listening.
             } catch (e: Exception) {
-                if (isRunning.get()) Log.e("DiscoveryManager", "Listen error", e)
+                if (isRunning.get()) Log.e("DiscoveryManager", "Broadcast receive error", e)
             }
         }
     }
@@ -267,3 +280,4 @@ class DiscoveryManager(
     }
     
 }
+
