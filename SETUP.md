@@ -38,7 +38,7 @@ Administrator and add private-network rules:
 
 ```powershell
 New-NetFirewallRule -DisplayName "LabConnect TCP" -Direction Inbound -Profile Private -LocalPort 5000 -Protocol TCP -Action Allow
-New-NetFirewallRule -DisplayName "LabConnect Discovery" -Direction Inbound -Profile Private -LocalPort 50001 -Protocol UDP -Action Allow
+New-NetFirewallRule -DisplayName "LabConnect Discovery" -Direction Inbound -Profile Private -LocalPort 50002 -Protocol UDP -Action Allow
 ```
 
 ## Android
@@ -63,16 +63,16 @@ The APK is a debug build intended for direct installation and evaluation.
 1. Install and open LabConnect on each device.
 2. Connect all devices to the same Wi-Fi or local network. Guest Wi-Fi may block
    device-to-device traffic.
-3. Allow incoming TCP port **5000** and UDP port **50001** in the computer's
+3. Allow incoming TCP port **5000** and UDP port **50002** in the computer's
    firewall. On Linux Mint with UFW:
 
    ```bash
    sudo ufw allow 5000/tcp
-   sudo ufw allow 50001/udp
+   sudo ufw allow 50002/udp
    ```
 
    On Windows, allow LabConnect when Windows Firewall prompts. If discovery
-   still fails, create inbound rules for TCP 5000 and UDP 50001.
+   still fails, create inbound rules for TCP 5000 and UDP 50002.
 4. Wait for the peer list to populate, tap/click **Connect**, then send a chat
    message or file. Accept incoming file requests on the receiving device.
 
@@ -126,3 +126,4 @@ in the user's LabConnect application-data folder. Source runs use files in the
 working directory. Android stores its identity and received files in
 app-private storage. Keep `keystore.dat` private if you need to preserve a
 source-run desktop identity.
+
