@@ -22,7 +22,8 @@ try {
     --main-jar labconnect-core-1.0.0-SNAPSHOT.jar `
     --main-class com.labconnect.desktop.Launcher `
     --dest $WorkDir `
-    --java-options "-Dlabconnect.packaged=true"
+    --java-options "-Dlabconnect.packaged=true" `
+    --java-options "-Djdk.net.unixdomain.tmpdir=C:\Windows\Temp"
   if ($LASTEXITCODE -ne 0) { throw "jpackage app-image creation failed with exit code $LASTEXITCODE" }
 
   $AppImage = Join-Path $WorkDir "LabConnect"
