@@ -12,7 +12,7 @@ device:
   type: DESKTOP
 network:
   tcpPort: 5000
-  discoveryPort: 50001
+  discoveryPort: 50002
   multicastGroup: 239.255.255.250
   announceIntervalSec: 5
   heartbeatIntervalSec: 5
@@ -28,3 +28,4 @@ logging:
   level: INFO
   fileEnabled: true
   consoleEnabled: true
+
